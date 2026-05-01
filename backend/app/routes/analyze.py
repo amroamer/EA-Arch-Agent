@@ -130,20 +130,45 @@ def _process_upload(
     return processed, None
 
 
+# Cap on the prose context we send to the model. 30 000 chars ≈ ~7.5k
+# tokens — comfortable alongside the criteria block + system prompt at
+# num_ctx=16384, captures most ADR tables and early operational sections
+# of a real SAD, and keeps qwen2.5vl 7B in its fast regime.
+# Empirically: 40k cap at num_ctx=32768 balloons single-framework calls
+# from ~20s to ~4 minutes — not worth the marginal extra coverage.
+# Structured extraction (markdown headings, labelled tables) means the
+# leading 30k carries more signal than the old flat 6k.
+_DOC_TEXT_CHAR_CAP = 30_000
+
+
 def _augment_user_msg(user_msg: str, doc_text: str | None) -> str:
     """If doc_text is set, prepend it as additional context for the model."""
     if not doc_text:
         return user_msg
-    # Truncate very long docs to keep within Gemma's context budget. The
-    # vision tile + system prompt + criteria already eat a chunk of the
-    # 16k-token context; ~6000 chars of prose is plenty.
-    snippet = doc_text[:6000]
-    truncated_marker = "" if len(doc_text) <= 6000 else "\n\n[…document truncated]"
+    if len(doc_text) <= _DOC_TEXT_CHAR_CAP:
+        snippet = doc_text
+        truncated_marker = ""
+    else:
+        snippet = doc_text[:_DOC_TEXT_CHAR_CAP]
+        truncated_marker = (
+            f"\n\n[…document truncated — "
+            f"{_DOC_TEXT_CHAR_CAP:,} of {len(doc_text):,} chars shown]"
+        )
     return (
         "Additional context from the uploaded Word document (use alongside "
         "the diagram for your analysis):\n\n"
         f"{snippet}{truncated_marker}\n\n---\n\n{user_msg}"
     )
+
+
+def _ctx_for(doc_text: str | None) -> int:
+    """Pick num_ctx based on whether we're augmenting with prose context.
+
+    Image-only flows fit comfortably in the default 8k. With doc text
+    (capped at ~5k tokens) plus criteria + system prompt, 16k is enough
+    headroom and keeps qwen2.5vl 7B in its fast regime.
+    """
+    return 16_384 if doc_text else 8_192
 
 
 def _resolve_prompt(
@@ -259,6 +284,7 @@ async def analyze(
             "image_bytes_resized": len(processed.resized_bytes) if processed else 0,
             "image_hash_prefix": processed.sha256[:12] if processed else None,
             "doc_text_chars": len(doc_text) if doc_text else 0,
+            "doc_truncated": bool(doc_text and len(doc_text) > _DOC_TEXT_CHAR_CAP),
         },
     )
 
@@ -279,6 +305,7 @@ async def analyze(
                 system_prompt=system_prompt,
                 user_prompt=user_msg,
                 images_b64=[processed.b64] if processed else [],
+                num_ctx=_ctx_for(doc_text),
             ):
                 if evt["type"] == "token":
                     collected.append(evt["content"])
@@ -417,6 +444,7 @@ async def _run_compliance(
             "framework_ids": [fw.id for fw in ordered],
             "image_bytes_resized": len(processed.resized_bytes) if processed else 0,
             "doc_text_chars": len(doc_text) if doc_text else 0,
+            "doc_truncated": bool(doc_text and len(doc_text) > _DOC_TEXT_CHAR_CAP),
         },
     )
 
@@ -483,7 +511,7 @@ async def _run_compliance(
                     user_prompt=user_msg,
                     images_b64=[processed.b64] if processed else [],
                     temperature=0.2,
-                    num_ctx=16384,
+                    num_ctx=16_384,
                     num_predict=8000,
                 ):
                     et = evt["type"]
