@@ -71,10 +71,15 @@ def _parse_framework_ids(value: str | None) -> list[str]:
 
 def _process_upload(
     *, raw: bytes, content_type: str | None, filename: str | None
-) -> tuple[ProcessedImage, str | None]:
-    """Return (image, doc_text). For .docx uploads, extract the first
-    embedded image + concatenated prose. For image uploads, run the normal
-    validate_and_resize pipeline and return text=None.
+) -> tuple[ProcessedImage | None, str | None]:
+    """Return (image, doc_text).
+
+    - .docx with embedded image(s): use the first as the diagram + extract
+      text as additional context.
+    - .docx with text only (no images): image is None, doc_text carries
+      the prose. Caller drives a text-only analysis.
+    - .docx with neither images nor non-trivial text: 400.
+    - Image upload (PNG/JPEG): normal validate_and_resize, text=None.
     """
     if is_docx(content_type, filename):
         # Same byte cap as images — protects the docx parser from OOM.
@@ -89,13 +94,21 @@ def _process_upload(
             extracted = extract_docx(raw)
         except DocxExtractionError as exc:
             raise HTTPException(400, str(exc))
-        if not extracted.images:
+
+        text = (extracted.text or "").strip() or None
+
+        if not extracted.images and not text:
             raise HTTPException(
                 400,
-                "The uploaded Word document does not contain any embedded "
-                "images. Add at least one architecture diagram to the doc "
-                "and try again.",
+                "The uploaded Word document is empty: it has neither an "
+                "embedded image nor any prose. Add an architecture diagram "
+                "or describe the architecture in text and try again.",
             )
+
+        if not extracted.images:
+            # Text-only path: model analyzes the prose without a vision input.
+            return None, text
+
         # First embedded image is treated as the primary diagram. Multi-image
         # docs aren't supported in v1 — we keep the rest of the pipeline
         # unchanged (single image_hash on Session).
@@ -107,7 +120,7 @@ def _process_upload(
                 400,
                 f"First embedded image in the .docx failed validation: {exc}",
             )
-        return processed, (extracted.text or None)
+        return processed, text
 
     # Plain image upload.
     try:
@@ -217,15 +230,17 @@ async def analyze(
 
     # Persist the image (idempotent on hash) and a session row up-front so
     # the History sidebar can show it even while the stream is still
-    # running.
-    await upsert_image(db, processed)
+    # running. For text-only docx (no embedded image), processed is None
+    # and image_hash stays NULL.
+    if processed is not None:
+        await upsert_image(db, processed)
     sess = Session(
         session_type=SessionType.ANALYZE.value,
         mode=mode.value,
         persona=persona.value if persona else None,
         focus_areas=parsed_focus,
         user_prompt=user_prompt,
-        image_hash=processed.sha256,
+        image_hash=processed.sha256 if processed else None,
         status=SessionStatus.RUNNING.value,
     )
     db.add(sess)
@@ -241,8 +256,9 @@ async def analyze(
             "persona": persona.value if persona else None,
             "focus_areas": parsed_focus,
             "image_bytes_in": len(raw),
-            "image_bytes_resized": len(processed.resized_bytes),
-            "image_hash_prefix": processed.sha256[:12],
+            "image_bytes_resized": len(processed.resized_bytes) if processed else 0,
+            "image_hash_prefix": processed.sha256[:12] if processed else None,
+            "doc_text_chars": len(doc_text) if doc_text else 0,
         },
     )
 
@@ -262,7 +278,7 @@ async def analyze(
             async for evt in stream_chat(
                 system_prompt=system_prompt,
                 user_prompt=user_msg,
-                images_b64=[processed.b64],
+                images_b64=[processed.b64] if processed else [],
             ):
                 if evt["type"] == "token":
                     collected.append(evt["content"])
@@ -344,7 +360,7 @@ _SSE_HEADERS = {
 
 async def _run_compliance(
     *,
-    processed,
+    processed: ProcessedImage | None,
     doc_text: str | None = None,
     framework_ids: list[str],
     user_prompt: str | None,
@@ -379,12 +395,13 @@ async def _run_compliance(
     if not ordered:
         raise HTTPException(404, "None of the supplied framework_ids exist")
 
-    await upsert_image(db, processed)
+    if processed is not None:
+        await upsert_image(db, processed)
     sess = Session(
         session_type=SessionType.ANALYZE.value,
         mode=AnalysisMode.COMPLIANCE.value,
         user_prompt=user_prompt,
-        image_hash=processed.sha256,
+        image_hash=processed.sha256 if processed else None,
         status=SessionStatus.RUNNING.value,
     )
     db.add(sess)
@@ -398,7 +415,8 @@ async def _run_compliance(
             "session_id": session_id,
             "framework_count": len(ordered),
             "framework_ids": [fw.id for fw in ordered],
-            "image_bytes_resized": len(processed.resized_bytes),
+            "image_bytes_resized": len(processed.resized_bytes) if processed else 0,
+            "doc_text_chars": len(doc_text) if doc_text else 0,
         },
     )
 
@@ -463,7 +481,7 @@ async def _run_compliance(
                 async for evt in stream_chat(
                     system_prompt=system_prompt,
                     user_prompt=user_msg,
-                    images_b64=[processed.b64],
+                    images_b64=[processed.b64] if processed else [],
                     temperature=0.2,
                     num_ctx=16384,
                     num_predict=8000,
