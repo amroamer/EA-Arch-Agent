@@ -121,6 +121,73 @@ Output ONLY the two delimited sections. Do not add any preamble, code fences, or
 """
 
 
+COMPLIANCE_PER_CRITERION_DEFAULT = """\
+You are an Enterprise-Architecture compliance auditor. You will score an architecture against ONE compliance criterion. The architecture is described by the document text below and (optionally) by an attached diagram image.
+
+Framework: "{framework_name}"
+Criterion ID: {criterion_id}
+Criterion: {criterion_text}
+
+Architecture description (Markdown — headings, tables, and ADR codes preserved in document order):
+---
+{document_text}
+---
+
+Return EXACTLY one JSON object — no preamble, no code fences, no commentary:
+
+{{
+  "compliance_pct": <one of 100, 50, 0, or null>,
+  "evidence": "<a concrete citation, or 'none'>",
+  "remarks": "<1–3 sentences explaining the verdict>"
+}}
+
+SCORING RUBRIC:
+  100  Compliant — there is EXPLICIT evidence in the document or diagram. At
+       least one of: a relevant ADR (ADR-NNN), a named section heading
+       (e.g. §9.3), a labelled table, a referenced standard (e.g. NCGR-EA-CAT-32),
+       or a clear element in the diagram. Be generous: if a single ADR or
+       section answers the criterion, score 100 — do NOT downgrade to 50
+       just because one sub-aspect is unelaborated.
+   50  Partial — the topic is touched but key elements are missing, unclear,
+       or only mentioned in passing without a concrete reference.
+    0  Not Compliant — the architecture EXPLICITLY contradicts the criterion
+       (e.g. proposes a banned vendor, violates a referenced standard).
+ null  Not Applicable — the criterion does not apply at all to this kind of
+       architecture. Use SPARINGLY; if the topic is discussed at all, prefer
+       0/50/100.
+
+EVIDENCE RULE (mandatory):
+- For compliance_pct = 100, "evidence" MUST be a concrete citation —
+  examples: "ADR-021", "§9.3 Compute platform", "Table 5", "NCGR-EA-CAT-32".
+  Do NOT use "none" or empty string with a 100 score.
+- For 50 / 0 / null, "evidence" may be "none" if you genuinely couldn't
+  cite anything; otherwise cite what you found.
+
+Output ONLY the JSON object.\
+"""
+
+
+COMPLIANCE_SYNTHESIS_DEFAULT = """\
+You are summarising a completed compliance scorecard for the "{framework_name}" framework. The per-criterion verdicts below are already final — do NOT re-score, do NOT contradict them.
+
+Verdicts:
+{verdicts_block}
+
+Produce a focused Markdown narrative (≤400 words) with three short sections:
+
+## Strengths
+What the architecture does well relative to "{framework_name}". Cite the specific ADRs, sections, or tables that the verdicts above reference. Mention 2–4 high-impact items.
+
+## Gaps and Risks
+The biggest Not Compliant / Partial criteria. Reference each by its criterion ID (e.g. "Q5-S-INF-3.1") and explain why it matters operationally.
+
+## Recommendations
+3–5 concrete, prioritised actions to close the most material gaps.
+
+Output Markdown only — no preamble, no JSON, no code fences.\
+"""
+
+
 COMPARE_DEFAULT = """\
 You are a senior cloud architect at KPMG conducting a comparison between a current state architecture and a reference (target/best-practice) architecture.
 
@@ -197,15 +264,47 @@ DEFAULTS: dict[str, dict] = {
         "template": ANALYZE_USER_DRIVEN_DEFAULT,
     },
     "analyze_compliance": {
-        "name": "Compliance scoring",
+        "name": "Compliance scoring (single-pass)",
         "description": (
-            "Drives the Compliance tab — produces a NARRATIVE + JSON "
-            "SCORECARD per framework. {framework_name} is the framework's "
-            "name, {criteria_block} is the auto-rendered numbered list of "
-            "criteria, {max_idx} is the last criterion's index."
+            "Single-pass compliance — one Ollama call scores ALL N criteria "
+            "for one framework. Produces a NARRATIVE + JSON SCORECARD. "
+            "{framework_name} is the framework's name, {criteria_block} is "
+            "the auto-rendered numbered list of criteria, {max_idx} is the "
+            "last criterion's index. Used when scoring_mode=single_pass."
         ),
         "placeholders": ["framework_name", "criteria_block", "max_idx"],
         "template": ANALYZE_COMPLIANCE_DEFAULT,
+    },
+    "compliance_per_criterion_v1": {
+        "name": "Compliance per-criterion scoring",
+        "description": (
+            "Per-criterion compliance — ONE Ollama call PER criterion. "
+            "Returns a JSON verdict {compliance_pct, evidence, remarks}. "
+            "Used when scoring_mode=per_criterion. {framework_name} is the "
+            "framework, {criterion_id} is the stable ID like Q5-S-INF-1.3, "
+            "{criterion_text} is the question text, {document_text} is the "
+            "structured architecture description (capped at 30 KB). The "
+            "image — when present — is passed as a separate Ollama input."
+        ),
+        "placeholders": [
+            "framework_name",
+            "criterion_id",
+            "criterion_text",
+            "document_text",
+        ],
+        "template": COMPLIANCE_PER_CRITERION_DEFAULT,
+    },
+    "compliance_synthesis_v1": {
+        "name": "Compliance synthesis (narrative)",
+        "description": (
+            "Final narrative pass after all per-criterion verdicts are in. "
+            "ONE call per framework producing a ≤400-word Markdown summary "
+            "with Strengths / Gaps / Recommendations. {framework_name} is "
+            "the framework, {verdicts_block} is the auto-rendered list of "
+            "the per-criterion verdicts (already evidence-enforced)."
+        ),
+        "placeholders": ["framework_name", "verdicts_block"],
+        "template": COMPLIANCE_SYNTHESIS_DEFAULT,
     },
     "compare": {
         "name": "Compare current vs reference",

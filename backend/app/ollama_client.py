@@ -76,6 +76,7 @@ async def stream_chat(
     temperature: float = 0.4,
     num_ctx: int = 8192,
     num_predict: int = 4096,
+    json_mode: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
     """Stream tokens from Ollama. Yields event dicts (see module docstring).
 
@@ -96,6 +97,7 @@ async def stream_chat(
             temperature=temperature,
             num_ctx=num_ctx,
             num_predict=num_predict,
+            json_mode=json_mode,
         ):
             yield evt
 
@@ -108,6 +110,7 @@ async def _stream_impl(
     temperature: float,
     num_ctx: int,
     num_predict: int,
+    json_mode: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
     payload = {
         "model": settings.ollama_model,
@@ -129,6 +132,11 @@ async def _stream_impl(
             "num_predict": num_predict,
         },
     }
+    if json_mode:
+        # Constrain output to valid JSON. Used by per-criterion scoring
+        # where each call returns a small {compliance_pct, evidence, remarks}
+        # object.
+        payload["format"] = "json"
 
     started = time.monotonic()
     ttft_ms: float | None = None

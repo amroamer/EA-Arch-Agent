@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
@@ -27,7 +28,13 @@ from sqlalchemy.orm import selectinload
 
 from app.database import AsyncSessionLocal, get_db
 from app.models.db import Framework, Session
-from app.models.requests import AnalysisMode, Persona, SessionStatus, SessionType
+from app.models.requests import (
+    AnalysisMode,
+    Persona,
+    ScoringMode,
+    SessionStatus,
+    SessionType,
+)
 from app.ollama_client import stream_chat
 from app.prompts import (
     build_compliance_prompt,
@@ -42,6 +49,7 @@ from app.utils.compliance_parser import (
     ComplianceStreamParser,
     compute_weighted_score,
 )
+from app.utils.compliance_rules import _enforce_evidence_rule
 from app.utils.docx_utils import (
     DocxExtractionError,
     extract_docx,
@@ -233,6 +241,7 @@ async def analyze(
     focus_areas: str | None = Form(None),
     user_prompt: str | None = Form(None),
     framework_ids: str | None = Form(None),
+    scoring_mode: ScoringMode = Form(ScoringMode.SINGLE_PASS),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     raw = await image.read()
@@ -244,9 +253,15 @@ async def analyze(
 
     # Compliance mode runs N model calls (one per framework) and streams
     # framework-aware events. Diverges enough from the linear single-prompt
-    # modes to warrant its own branch.
+    # modes to warrant its own branch. The scoring_mode flag picks between
+    # the original single-pass orchestrator and the new per-criterion one.
     if mode == AnalysisMode.COMPLIANCE:
-        return await _run_compliance(
+        runner = (
+            _run_compliance_per_criterion
+            if scoring_mode == ScoringMode.PER_CRITERION
+            else _run_compliance
+        )
+        return await runner(
             processed=processed,
             doc_text=doc_text,
             framework_ids=_parse_framework_ids(framework_ids),
@@ -656,6 +671,471 @@ async def _run_compliance(
                     "status": "error" if had_error or client_disconnected else "done",
                     "frameworks_completed": len(scorecards),
                     "total_ms": total_ms_overall,
+                },
+            )
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
+
+
+# ── Compliance per-criterion mode ─────────────────────────────────────────
+
+
+# Matches stable criterion IDs at the start of criteria text:
+#   "Q1-S-INF-1.1: Does the infrastructure ..." → "Q1-S-INF-1.1"
+#   "Q12-S-APP-7.1:Can the application scale..." → "Q12-S-APP-7.1"
+_CRITERION_ID_RE = re.compile(r"^(Q\d+(?:-[A-Z0-9]+)+(?:\.\d+)?)", re.IGNORECASE)
+
+
+def _extract_criterion_id(criteria: str, *, fallback: str) -> str:
+    """Pull the leading 'Q5-S-INF-1.3' from the criterion text, or fall back."""
+    if not criteria:
+        return fallback
+    m = _CRITERION_ID_RE.match(criteria.strip())
+    return m.group(1) if m else fallback
+
+
+def _strip_criterion_id_prefix(criteria: str) -> str:
+    """Remove the leading ID + colon so the model sees just the question."""
+    if not criteria:
+        return ""
+    s = criteria.strip()
+    m = _CRITERION_ID_RE.match(s)
+    if not m:
+        return s
+    rest = s[m.end():].lstrip()
+    if rest.startswith(":"):
+        rest = rest[1:].lstrip()
+    return rest
+
+
+def _render_verdicts_block(verdicts: list[dict]) -> str:
+    """Format the per-criterion verdicts for the synthesis prompt.
+
+    One line per verdict, e.g.:
+      [Q1-S-INF-1.1] weight 25 — Compliant — evidence: §9.3 — Architecture …
+    """
+    lines: list[str] = []
+    for v in verdicts:
+        cid = v.get("criterion_id") or "?"
+        weight = v.get("weight_planned", 0)
+        pct = v.get("compliance_pct")
+        label = (
+            "Compliant" if pct == 100
+            else "Partial" if pct == 50
+            else "Not Compliant" if pct == 0
+            else "N/A"
+        )
+        evidence = (v.get("evidence") or "").strip() or "none"
+        remarks = (v.get("remarks") or "").strip()
+        lines.append(
+            f"[{cid}] weight {weight:g} — {label} — evidence: {evidence} — {remarks}"
+        )
+    return "\n".join(lines)
+
+
+async def _score_one_criterion(
+    *,
+    template: str,
+    framework_name: str,
+    criterion_id: str,
+    criterion_text: str,
+    document_text: str,
+    image_b64: str | None,
+) -> dict:
+    """Make ONE Ollama call for ONE criterion. Returns the verdict dict
+    {compliance_pct, evidence, remarks} after evidence-enforcement.
+
+    Strategy:
+      1. Try with `format: "json"` — model emits a strict JSON object.
+      2. If parse fails, retry once WITHOUT json_mode and JSON-extract from
+         the text response.
+      3. If both fail, return a structured 'parse_failed' verdict so the
+         framework run can continue (the row gets compliance_pct=null +
+         a remarks note).
+    """
+    system_prompt = template.format(
+        framework_name=framework_name,
+        criterion_id=criterion_id,
+        criterion_text=criterion_text,
+        document_text=document_text or "(no document text provided)",
+    )
+    user_msg = "Score this criterion. Output ONLY the JSON object."
+    images = [image_b64] if image_b64 else []
+
+    async def _collect(json_mode: bool) -> str:
+        pieces: list[str] = []
+        async for evt in stream_chat(
+            system_prompt=system_prompt,
+            user_prompt=user_msg,
+            images_b64=images,
+            temperature=0.1,
+            num_ctx=16_384,
+            num_predict=512,  # ~150-token JSON object — plenty
+            json_mode=json_mode,
+        ):
+            if evt["type"] == "token":
+                pieces.append(evt["content"])
+            elif evt["type"] == "error":
+                raise RuntimeError(evt.get("message") or "ollama error")
+            elif evt["type"] == "done":
+                break
+        return "".join(pieces).strip()
+
+    def _parse_or_extract(raw: str) -> dict | None:
+        """Try strict JSON first; on failure, scan for the first {...} block."""
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start == -1 or end == -1 or end < start:
+            return None
+        try:
+            return json.loads(raw[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+
+    raw = ""
+    parsed: dict | None = None
+    try:
+        raw = await _collect(json_mode=True)
+        parsed = _parse_or_extract(raw)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("per-criterion json_mode call failed: %s", exc)
+
+    if parsed is None:
+        try:
+            raw = await _collect(json_mode=False)
+            parsed = _parse_or_extract(raw)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("per-criterion text-mode retry failed: %s", exc)
+
+    if not isinstance(parsed, dict):
+        # Hard failure — return a sentinel verdict so the orchestrator can
+        # continue and the row shows as un-scored with a clear note.
+        return {
+            "compliance_pct": None,
+            "evidence": "parse_failed",
+            "remarks": (
+                "Server could not parse the model's response into a JSON "
+                "verdict. Re-run to retry. (raw: "
+                f"{(raw or '')[:120]!r})"
+            ),
+        }
+
+    # Normalise the three expected fields.
+    pct = parsed.get("compliance_pct")
+    if pct is not None and pct not in {0, 50, 100}:
+        # Snap non-categorical numeric values to {0,50,100}.
+        try:
+            pct_num = float(pct)
+            pct = 0 if pct_num < 25 else (50 if pct_num < 75 else 100)
+        except (TypeError, ValueError):
+            pct = None
+    evidence = parsed.get("evidence")
+    if not isinstance(evidence, str):
+        evidence = "" if evidence is None else str(evidence)
+    remarks = parsed.get("remarks")
+    if not isinstance(remarks, str):
+        remarks = "" if remarks is None else str(remarks)
+
+    verdict = {
+        "compliance_pct": pct,
+        "evidence": evidence.strip(),
+        "remarks": remarks.strip(),
+    }
+    return _enforce_evidence_rule(verdict)
+
+
+async def _run_compliance_per_criterion(
+    *,
+    processed: ProcessedImage | None,
+    doc_text: str | None = None,
+    framework_ids: list[str],
+    user_prompt: str | None,
+    db: AsyncSession,
+) -> StreamingResponse:
+    """Per-criterion compliance orchestrator.
+
+    For each framework: emit framework_started; then for each criterion
+    emit criterion_started → call Ollama → emit criterion_done. After all
+    criteria are scored, run ONE synthesis call streaming narrative_token
+    events. Then emit framework_done with the full scorecard payload.
+    """
+    if not framework_ids:
+        raise HTTPException(
+            400, "At least one framework_id is required for mode=compliance"
+        )
+
+    stmt = (
+        select(Framework)
+        .where(Framework.id.in_(framework_ids))
+        .options(selectinload(Framework.items))
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    by_id = {fw.id: fw for fw in rows}
+    seen: set[str] = set()
+    ordered: list[Framework] = []
+    for fid in framework_ids:
+        if fid in by_id and fid not in seen:
+            ordered.append(by_id[fid])
+            seen.add(fid)
+    if not ordered:
+        raise HTTPException(404, "None of the supplied framework_ids exist")
+
+    if processed is not None:
+        await upsert_image(db, processed)
+    sess = Session(
+        session_type=SessionType.ANALYZE.value,
+        mode=AnalysisMode.COMPLIANCE.value,
+        user_prompt=user_prompt,
+        image_hash=processed.sha256 if processed else None,
+        status=SessionStatus.RUNNING.value,
+    )
+    db.add(sess)
+    await db.commit()
+    await db.refresh(sess)
+    session_id = sess.id
+
+    # Resolve both templates ONCE per request.
+    per_criterion_template = await fetch_template(db, "compliance_per_criterion_v1")
+    synthesis_template = await fetch_template(db, "compliance_synthesis_v1")
+
+    # Truncate the doc text the same way the single-pass mode does.
+    doc_for_prompt = ""
+    if doc_text:
+        if len(doc_text) <= _DOC_TEXT_CHAR_CAP:
+            doc_for_prompt = doc_text
+        else:
+            doc_for_prompt = (
+                doc_text[:_DOC_TEXT_CHAR_CAP]
+                + f"\n\n[…document truncated — {_DOC_TEXT_CHAR_CAP:,} of {len(doc_text):,} chars shown]"
+            )
+
+    logger.info(
+        "compliance_per_criterion_started",
+        extra={
+            "session_id": session_id,
+            "framework_count": len(ordered),
+            "framework_ids": [fw.id for fw in ordered],
+            "image_bytes_resized": len(processed.resized_bytes) if processed else 0,
+            "doc_text_chars": len(doc_text) if doc_text else 0,
+            "doc_truncated": bool(doc_text and len(doc_text) > _DOC_TEXT_CHAR_CAP),
+        },
+    )
+
+    async def event_generator() -> AsyncIterator[bytes]:
+        yield _sse_event({"type": "session_created", "id": session_id})
+
+        scorecards: list[dict] = []
+        had_error = False
+        error_message: str | None = None
+        client_disconnected = False
+        completed_normally = False
+        run_started = datetime.now(timezone.utc)
+
+        try:
+            for fw in ordered:
+                fw_items = sorted(fw.items, key=lambda it: it.sort_order)
+                # Build the prompt-facing items list, with criterion_id
+                # extracted from the prefix and a clean question text.
+                prepared = []
+                for i, src in enumerate(fw_items):
+                    cid = _extract_criterion_id(src.criteria, fallback=src.id[:8])
+                    prepared.append(
+                        {
+                            "idx": i,
+                            "framework_item_id": src.id,
+                            "criterion_id": cid,
+                            "criteria": src.criteria,
+                            "criterion_text": _strip_criterion_id_prefix(src.criteria),
+                            "weight_planned": float(src.weight_planned or 0),
+                        }
+                    )
+
+                yield _sse_event(
+                    {
+                        "type": "framework_started",
+                        "framework_id": fw.id,
+                        "framework_name": fw.name,
+                        "total_criteria": len(prepared),
+                        # Backward-compat: include the same shape single_pass
+                        # uses, plus the new criterion_id field.
+                        "items": [
+                            {
+                                "idx": p["idx"],
+                                "framework_item_id": p["framework_item_id"],
+                                "criterion_id": p["criterion_id"],
+                                "criteria": p["criteria"],
+                                "weight_planned": p["weight_planned"],
+                            }
+                            for p in prepared
+                        ],
+                    }
+                )
+
+                verdicts: list[dict] = []
+                for p in prepared:
+                    yield _sse_event(
+                        {
+                            "type": "criterion_started",
+                            "framework_id": fw.id,
+                            "idx": p["idx"],
+                            "criterion_id": p["criterion_id"],
+                        }
+                    )
+
+                    # The actual model call. Sequential — Ollama serialises.
+                    verdict = await _score_one_criterion(
+                        template=per_criterion_template,
+                        framework_name=fw.name,
+                        criterion_id=p["criterion_id"],
+                        criterion_text=p["criterion_text"] or p["criteria"],
+                        document_text=doc_for_prompt,
+                        image_b64=processed.b64 if processed else None,
+                    )
+
+                    yield _sse_event(
+                        {
+                            "type": "criterion_done",
+                            "framework_id": fw.id,
+                            "idx": p["idx"],
+                            "criterion_id": p["criterion_id"],
+                            "compliance_pct": verdict["compliance_pct"],
+                            "evidence": verdict.get("evidence") or None,
+                            "remarks": verdict.get("remarks") or None,
+                        }
+                    )
+
+                    verdicts.append(
+                        {
+                            **p,
+                            "compliance_pct": verdict["compliance_pct"],
+                            "evidence": verdict.get("evidence") or None,
+                            "remarks": verdict.get("remarks") or None,
+                        }
+                    )
+
+                # ── Synthesis pass — one streaming call per framework ──
+                synth_prompt = synthesis_template.format(
+                    framework_name=fw.name,
+                    verdicts_block=_render_verdicts_block(verdicts),
+                )
+                narrative_acc: list[str] = []
+                async for evt in stream_chat(
+                    system_prompt=synth_prompt,
+                    user_prompt="Produce the narrative as instructed.",
+                    images_b64=[],  # synthesis doesn't need the image
+                    temperature=0.3,
+                    num_ctx=16_384,
+                    num_predict=2_000,
+                ):
+                    et = evt["type"]
+                    if et == "token":
+                        narrative_acc.append(evt["content"])
+                        yield _sse_event(
+                            {
+                                "type": "narrative_token",
+                                "framework_id": fw.id,
+                                "content": evt["content"],
+                            }
+                        )
+                    elif et == "error":
+                        # Synthesis failed — keep the scorecard, skip the
+                        # narrative for this framework.
+                        logger.warning(
+                            "synthesis_error",
+                            extra={
+                                "framework_id": fw.id,
+                                "message": evt.get("message"),
+                            },
+                        )
+                        break
+                    elif et == "done":
+                        break
+
+                # Build the saved scorecard items (same shape as single_pass
+                # plus an `evidence` field per row).
+                items_full = []
+                for v in verdicts:
+                    items_full.append(
+                        {
+                            "framework_item_id": v["framework_item_id"],
+                            "criteria": v["criteria"],
+                            "weight_planned": v["weight_planned"],
+                            "compliance_pct": v["compliance_pct"],
+                            "evidence": v.get("evidence"),
+                            "remarks": v.get("remarks"),
+                        }
+                    )
+                weighted = compute_weighted_score(items_full)
+                scorecard = {
+                    "framework_id": fw.id,
+                    "framework_name": fw.name,
+                    "narrative_markdown": "".join(narrative_acc).strip() or None,
+                    "weighted_score": round(weighted, 2),
+                    "items": items_full,
+                }
+                scorecards.append(scorecard)
+
+                yield _sse_event(
+                    {
+                        "type": "framework_done",
+                        "framework_id": fw.id,
+                        "weighted_score": round(weighted, 2),
+                        "scorecard": scorecard,
+                    }
+                )
+
+            yield _sse_event({"type": "done"})
+            completed_normally = True
+        except (GeneratorExit, asyncio.CancelledError):
+            client_disconnected = True
+            raise
+        except Exception as exc:  # noqa: BLE001
+            had_error = True
+            error_message = str(exc)
+            logger.exception("per-criterion compliance run failed")
+            yield _sse_event({"type": "error", "message": error_message})
+        finally:
+            try:
+                async with AsyncSessionLocal() as fresh_db:
+                    row = await fresh_db.get(Session, session_id)
+                    if row is not None:
+                        row.scorecards = scorecards or None
+                        row.completed_at = datetime.now(timezone.utc)
+                        row.total_ms = int(
+                            (datetime.now(timezone.utc) - run_started).total_seconds()
+                            * 1000
+                        )
+                        if had_error:
+                            row.status = SessionStatus.ERROR.value
+                            row.error_message = error_message
+                        elif client_disconnected and not completed_normally:
+                            row.status = SessionStatus.ERROR.value
+                            row.error_message = "Client disconnected before completion"
+                        else:
+                            row.status = SessionStatus.DONE.value
+                        await fresh_db.commit()
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to persist per-criterion session state")
+
+            logger.info(
+                "compliance_per_criterion_finished",
+                extra={
+                    "session_id": session_id,
+                    "status": "error" if had_error or client_disconnected else "done",
+                    "frameworks_completed": len(scorecards),
+                    "total_criteria_scored": sum(
+                        len(sc["items"]) for sc in scorecards
+                    ),
                 },
             )
 

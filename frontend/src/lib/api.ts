@@ -76,6 +76,9 @@ export interface SavedScorecardItem {
   weight_planned: number;
   /** 100 = Compliant, 50 = Partial, 0 = Not Compliant, null = Not Applicable. */
   compliance_pct: number | null;
+  /** Citation produced by per-criterion mode. ADR id, section heading,
+   *  table number, etc. Older sessions (single_pass) don't have this. */
+  evidence?: string | null;
   remarks: string | null;
 }
 
@@ -111,20 +114,26 @@ export type StreamEvent =
   | { type: "done"; ttft_ms?: number; total_ms?: number; eval_count?: number; prompt_eval_count?: number }
   | { type: "error"; code?: string; message?: string }
   | { type: "busy"; message?: string }
-  // ── Compliance-mode events ──
+  // ── Compliance-mode events (single_pass + per_criterion share these) ──
   | {
       type: "framework_started";
       framework_id: string;
       framework_name: string;
-      item_count: number;
+      // single_pass uses item_count; per_criterion uses total_criteria. Both
+      // optional so consumers can read whichever is present.
+      item_count?: number;
+      total_criteria?: number;
       items: Array<{
         idx: number;
         framework_item_id: string;
+        /** Stable ID like "Q5-S-INF-1.3" — only emitted in per_criterion mode. */
+        criterion_id?: string;
         criteria: string;
         weight_planned: number;
       }>;
     }
   | { type: "narrative_token"; framework_id: string; content: string }
+  // ── single_pass-only event ──
   | {
       type: "scorecard_row";
       framework_id: string;
@@ -132,11 +141,32 @@ export type StreamEvent =
       compliance_pct: number | null;
       remarks: string | null;
     }
+  // ── per_criterion-only events ──
+  | {
+      type: "criterion_started";
+      framework_id: string;
+      idx: number;
+      criterion_id: string;
+    }
+  | {
+      type: "criterion_done";
+      framework_id: string;
+      idx: number;
+      criterion_id: string;
+      compliance_pct: number | null;
+      evidence: string | null;
+      remarks: string | null;
+    }
   | {
       type: "framework_done";
       framework_id: string;
       weighted_score: number;
+      /** Per-criterion mode includes the full saved scorecard payload. */
+      scorecard?: SavedScorecard;
     };
+
+/** Compliance scoring strategy. Plumbed to the backend as a form field. */
+export type ScoringMode = "single_pass" | "per_criterion";
 
 // ── Non-streaming endpoints ────────────────────────────────────────────
 

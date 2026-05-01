@@ -32,6 +32,7 @@ import {
   type AnalysisMode,
   type FrameworkSummary,
   type Persona,
+  type ScoringMode,
 } from "@/lib/api";
 
 const FOCUS_OPTIONS: { value: string; label: string }[] = [
@@ -59,6 +60,7 @@ export default function Analyze() {
   const [selectedFrameworkIds, setSelectedFrameworkIds] = useState<Set<string>>(
     new Set(),
   );
+  const [scoringMode, setScoringMode] = useState<ScoringMode>("per_criterion");
 
   const stream = useStreamingFetch();
 
@@ -99,6 +101,7 @@ export default function Analyze() {
     if (mode === "user_driven") fd.append("user_prompt", userPrompt);
     if (mode === "compliance") {
       fd.append("framework_ids", Array.from(selectedFrameworkIds).join(","));
+      fd.append("scoring_mode", scoringMode);
     }
     await stream.start(apiUrl("/analyze"), fd);
   };
@@ -216,6 +219,68 @@ export default function Analyze() {
                     Frameworks. Each framework produces its own narrative
                     critique and a filled scorecard you can edit before saving.
                   </p>
+
+                  {/* Scoring mode toggle */}
+                  <div className="rounded-md border border-gray-200 bg-gray-50/50 p-3">
+                    <Label className="text-xs uppercase tracking-wider text-gray-500">
+                      Scoring strategy
+                    </Label>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      <label
+                        className={`flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-sm ${
+                          scoringMode === "per_criterion"
+                            ? "border-kpmg-blue bg-kpmg-blue/5"
+                            : "border-gray-200 hover:bg-gray-100"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="scoring_mode"
+                          value="per_criterion"
+                          checked={scoringMode === "per_criterion"}
+                          onChange={() => setScoringMode("per_criterion")}
+                          className="mt-0.5"
+                        />
+                        <div>
+                          <div className="font-medium text-kpmg-darkBlue">
+                            Per-criterion (recommended)
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            One model call per criterion. Rows tick in
+                            individually. Each Compliant verdict cites
+                            specific evidence (ADR / section).
+                          </div>
+                        </div>
+                      </label>
+                      <label
+                        className={`flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-sm ${
+                          scoringMode === "single_pass"
+                            ? "border-kpmg-blue bg-kpmg-blue/5"
+                            : "border-gray-200 hover:bg-gray-100"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="scoring_mode"
+                          value="single_pass"
+                          checked={scoringMode === "single_pass"}
+                          onChange={() => setScoringMode("single_pass")}
+                          className="mt-0.5"
+                        />
+                        <div>
+                          <div className="font-medium text-kpmg-darkBlue">
+                            Single-pass (faster, lower fidelity)
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            One model call scores all criteria at once.
+                            Narrative streams first, then scorecard. Original
+                            behaviour.
+                          </div>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+
                   <div>
                     <div className="flex items-center justify-between gap-3">
                       <Label>

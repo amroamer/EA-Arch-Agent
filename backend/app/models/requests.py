@@ -28,3 +28,17 @@ class SessionStatus(str, Enum):
     RUNNING = "running"
     DONE = "done"
     ERROR = "error"
+
+
+class ScoringMode(str, Enum):
+    """Compliance-mode scoring strategy.
+
+    - SINGLE_PASS: one Ollama call per framework producing NARRATIVE +
+      SCORECARD for all criteria at once. Original implementation.
+    - PER_CRITERION: one Ollama call PER criterion (focused JSON verdict),
+      followed by one synthesis call per framework for the narrative.
+      Enables incremental UI updates and tighter per-criterion scoring.
+    """
+
+    SINGLE_PASS = "single_pass"
+    PER_CRITERION = "per_criterion"

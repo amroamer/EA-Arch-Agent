@@ -33,13 +33,20 @@ import {
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
+/** Per-row UI state. Single-pass mode jumps queued → done in one event;
+ *  per-criterion mode goes queued → scoring → done. */
+type RowStatus = "queued" | "scoring" | "done" | "error";
+
 interface RowState {
   framework_item_id: string;
   criteria: string;
+  criterion_id?: string;
   weight_planned: number;
   /** 100 / 50 / 0 / null. Undefined while still streaming. */
   compliance_pct: number | null | undefined;
+  evidence?: string | null;
   remarks: string | null | undefined;
+  status: RowStatus;
 }
 
 interface FrameworkState {
@@ -111,7 +118,11 @@ function computeWeightedScore(rows: RowState[]): number {
   return denom > 0 ? num / denom : 0;
 }
 
-/** Build the per-framework state from the cumulative event stream. */
+/** Build the per-framework state from the cumulative event stream.
+ *  Handles BOTH event protocols:
+ *    - single_pass: framework_started → scorecard_row × N → framework_done
+ *    - per_criterion: framework_started → (criterion_started → criterion_done) × N → narrative_token × M → framework_done
+ */
 function deriveFromEvents(events: StreamEvent[]): FrameworkState[] {
   const map = new Map<string, FrameworkState>();
   const order: string[] = [];
@@ -128,9 +139,12 @@ function deriveFromEvents(events: StreamEvent[]): FrameworkState[] {
           rows: evt.items.map((it) => ({
             framework_item_id: it.framework_item_id,
             criteria: it.criteria,
+            criterion_id: it.criterion_id,
             weight_planned: it.weight_planned,
             compliance_pct: undefined,
+            evidence: undefined,
             remarks: undefined,
+            status: "queued",
           })),
         });
       }
@@ -138,12 +152,35 @@ function deriveFromEvents(events: StreamEvent[]): FrameworkState[] {
       const fw = map.get(evt.framework_id);
       if (fw) fw.narrative += evt.content;
     } else if (evt.type === "scorecard_row") {
+      // single_pass-only: this row is now done.
       const fw = map.get(evt.framework_id);
       if (fw && evt.idx >= 0 && evt.idx < fw.rows.length) {
         fw.rows[evt.idx] = {
           ...fw.rows[evt.idx],
           compliance_pct: evt.compliance_pct,
           remarks: evt.remarks,
+          status: "done",
+        };
+      }
+    } else if (evt.type === "criterion_started") {
+      // per_criterion-only: row transitions to scoring.
+      const fw = map.get(evt.framework_id);
+      if (fw && evt.idx >= 0 && evt.idx < fw.rows.length) {
+        fw.rows[evt.idx] = {
+          ...fw.rows[evt.idx],
+          status: "scoring",
+        };
+      }
+    } else if (evt.type === "criterion_done") {
+      // per_criterion-only: row populated and transitioned to done.
+      const fw = map.get(evt.framework_id);
+      if (fw && evt.idx >= 0 && evt.idx < fw.rows.length) {
+        fw.rows[evt.idx] = {
+          ...fw.rows[evt.idx],
+          compliance_pct: evt.compliance_pct,
+          evidence: evt.evidence,
+          remarks: evt.remarks,
+          status: "done",
         };
       }
     } else if (evt.type === "framework_done") {
@@ -405,6 +442,10 @@ function FrameworkCard({ fw, rows, score, editable, onUpdateRow }: CardProps) {
               {rows.map((r, idx) => {
                 const tone = complianceTone(r.compliance_pct);
                 const value = pctToValue(r.compliance_pct);
+                const hasEvidence =
+                  r.evidence &&
+                  r.evidence.trim() &&
+                  r.evidence.trim().toLowerCase() !== "none";
                 return (
                   <tr key={idx} className="align-top">
                     <td className="p-3 pt-3.5 text-center">
@@ -419,7 +460,22 @@ function FrameworkCard({ fw, rows, score, editable, onUpdateRow }: CardProps) {
                       {r.weight_planned.toFixed(1)}
                     </td>
                     <td className="px-3 py-2">
-                      {editable ? (
+                      {/* Compliance column — state machine driven */}
+                      {r.status === "queued" ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
+                          Queued
+                        </span>
+                      ) : r.status === "scoring" ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-status-yellow/15 px-2 py-0.5 text-xs font-medium text-kpmg-darkBlue">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Scoring…
+                        </span>
+                      ) : r.status === "error" ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-status-red/15 px-2 py-0.5 text-xs text-status-red">
+                          <AlertCircle className="h-3 w-3" />
+                          Failed
+                        </span>
+                      ) : editable ? (
                         <select
                           value={value}
                           onChange={(e) =>
@@ -437,11 +493,6 @@ function FrameworkCard({ fw, rows, score, editable, onUpdateRow }: CardProps) {
                             </option>
                           ))}
                         </select>
-                      ) : r.compliance_pct === undefined ? (
-                        <span className="inline-flex items-center gap-1 text-xs text-gray-400">
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                          waiting…
-                        </span>
                       ) : (
                         <span
                           className={cn(
@@ -455,24 +506,36 @@ function FrameworkCard({ fw, rows, score, editable, onUpdateRow }: CardProps) {
                       )}
                     </td>
                     <td className="px-3 py-2">
-                      {editable ? (
-                        <Textarea
-                          value={r.remarks ?? ""}
-                          onChange={(e) =>
-                            onUpdateRow(idx, {
-                              remarks: e.target.value || null,
-                            })
-                          }
-                          className="min-h-[40px] resize-y text-sm"
-                          placeholder="Notes…"
-                        />
-                      ) : (
-                        <span className="text-sm text-gray-700">
-                          {r.remarks ?? (
-                            <span className="text-gray-300">—</span>
-                          )}
-                        </span>
-                      )}
+                      <div className="space-y-1.5">
+                        {hasEvidence && r.status === "done" && (
+                          <div
+                            className="inline-block max-w-full truncate rounded bg-kpmg-blue/10 px-2 py-0.5 font-mono text-[11px] text-kpmg-blue"
+                            title={r.evidence ?? undefined}
+                          >
+                            {r.evidence}
+                          </div>
+                        )}
+                        {editable ? (
+                          <Textarea
+                            value={r.remarks ?? ""}
+                            onChange={(e) =>
+                              onUpdateRow(idx, {
+                                remarks: e.target.value || null,
+                              })
+                            }
+                            className="min-h-[40px] resize-y text-sm"
+                            placeholder="Notes…"
+                          />
+                        ) : r.status === "done" ? (
+                          <span className="text-sm text-gray-700">
+                            {r.remarks ?? (
+                              <span className="text-gray-300">—</span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-gray-300">—</span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -544,7 +607,9 @@ export function SavedScorecardsView({
             criteria: it.criteria,
             weight_planned: it.weight_planned,
             compliance_pct: it.compliance_pct,
+            evidence: it.evidence ?? null,
             remarks: it.remarks,
+            status: "done" as const,
           })),
         };
         return (
