@@ -1,0 +1,31 @@
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import path from "node:path";
+
+// Mounted under /arch-assistant/ so it can co-exist with other KPMG apps
+// behind a shared nginx (matches Slide-Generator's /slide-generator/ and
+// Data-Steward-Assistant's /dataowner/ pattern).
+export default defineConfig({
+  plugins: [react()],
+  base: "/arch-assistant/",
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
+  server: {
+    host: "0.0.0.0",
+    port: 5173,
+    strictPort: true,
+    proxy: {
+      // In dev, /arch-assistant/api/* is proxied directly to the backend
+      // (mirrors the production nginx routing). VITE_API_PROXY_TARGET lets
+      // Docker Compose override the host: inside the container the backend
+      // is reachable as http://backend:8000, locally it's localhost:8000.
+      "/arch-assistant/api": {
+        target: process.env.VITE_API_PROXY_TARGET ?? "http://localhost:8000",
+        changeOrigin: true,
+      },
+    },
+  },
+});

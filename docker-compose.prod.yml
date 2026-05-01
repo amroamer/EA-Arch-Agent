@@ -1,0 +1,49 @@
+# Production override — extends docker-compose.yml.
+# Usage:  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Differences from dev:
+#   - No source volume mounts (uses built images)
+#   - Adds nginx reverse proxy with HTTPS termination
+#   - Frontend builds static assets and is served by nginx
+#   - Loads env from .env.production
+
+services:
+  ollama:
+    # In prod, do not expose Ollama directly — only backend reaches it.
+    ports: []
+
+  db:
+    # In prod, do not expose Postgres on the host.
+    ports: []
+
+  backend:
+    env_file:
+      - .env.production
+    volumes: []  # no source mount in prod
+    ports: []    # internal only; nginx proxies to it
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+    env_file:
+      - .env.production
+    volumes: []
+    ports: []
+    # Frontend container serves static assets via nginx-distroless or similar.
+    # In prod the nginx service below proxies to it.
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: arch-assistant-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped

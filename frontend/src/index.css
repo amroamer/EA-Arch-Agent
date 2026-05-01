@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    @apply font-sans antialiased;
+  }
+  /* Keyboard-focus rings throughout the app (a11y). */
+  :focus-visible {
+    @apply outline-none ring-2 ring-kpmg-cobalt ring-offset-2 ring-offset-white;
+  }
+}
+
+@layer components {
+  /* Markdown rendering inside StreamingResponse — keeps prose readable. */
+  .md-content h1 { @apply text-2xl font-bold text-kpmg-darkBlue mt-6 mb-2; }
+  .md-content h2 { @apply text-xl  font-semibold text-kpmg-blue mt-5 mb-2; }
+  .md-content h3 { @apply text-lg  font-semibold text-kpmg-darkBlue mt-4 mb-2; }
+  .md-content h4 { @apply text-base font-semibold text-kpmg-darkBlue mt-3 mb-1; }
+  .md-content p  { @apply my-2 leading-relaxed; }
+  .md-content ul { @apply list-disc pl-6 my-2 space-y-1; }
+  .md-content ol { @apply list-decimal pl-6 my-2 space-y-1; }
+  .md-content li { @apply leading-relaxed; }
+  .md-content code {
+    @apply px-1 py-0.5 rounded bg-gray-100 text-kpmg-darkBlue font-mono text-sm;
+  }
+  .md-content pre {
+    @apply p-3 rounded bg-gray-50 border border-gray-200 overflow-x-auto my-3;
+  }
+  .md-content pre code {
+    @apply bg-transparent px-0 py-0 text-sm;
+  }
+  .md-content strong { @apply font-semibold text-kpmg-darkBlue; }
+  .md-content blockquote {
+    @apply border-l-4 border-kpmg-lightBlue pl-3 my-3 text-gray-700 italic;
+  }
+  .md-content hr { @apply my-4 border-gray-200; }
+  .md-content table { @apply w-full my-3 border-collapse; }
+  .md-content th, .md-content td {
+    @apply border border-gray-200 px-3 py-1 text-left;
+  }
+  .md-content th { @apply bg-gray-50 font-semibold; }
+}

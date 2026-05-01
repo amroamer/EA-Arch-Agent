@@ -1,0 +1,64 @@
+# ── Environment & secrets ─────────────────────────────────────────────
+.env
+.env.local
+.env.production
+.env.*.local
+*.pem
+*.key
+
+# ── Python ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# ── Node / Frontend ───────────────────────────────────────────────────
+node_modules/
+.pnp.*
+.npm/
+.yarn/
+.parcel-cache/
+.next/
+.vite/
+dist-ssr/
+
+# ── Build outputs ─────────────────────────────────────────────────────
+frontend/dist/
+backend/dist/
+
+# ── Docker volumes (mapped in compose) ─────────────────────────────────
+ollama_data/
+postgres_data/
+
+# ── Editor / OS ───────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Logs ──────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Local test artifacts ──────────────────────────────────────────────
+test_diagram*.png
+test_diagram*.jpg
+test_diagram*.jpeg
+*.tmp
+
+# ── Plan files (kept outside repo) ────────────────────────────────────
+.claude/

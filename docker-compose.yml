@@ -1,0 +1,122 @@
+services:
+  # ──────────────────────────────────────────────────────────────────────
+  # Ollama — local multimodal LLM inference (Gemma 4)
+  # GPU passthrough requires NVIDIA Container Toolkit on the host.
+  # ──────────────────────────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: arch-assistant-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      # Pin model in VRAM indefinitely — eliminates reload latency.
+      OLLAMA_KEEP_ALIVE: "-1"
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────────────────────────────────
+  # ollama-pull — one-shot bootstrap that pulls the configured model
+  # if it isn't already present in the volume.
+  # ──────────────────────────────────────────────────────────────────────
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: arch-assistant-ollama-pull
+    depends_on:
+      ollama:
+        condition: service_started
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:26b}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'until ollama list >/dev/null 2>&1; do echo "waiting for ollama..."; sleep 2; done; if ollama list | awk "NR>1 {print \$1}" | grep -qx "$$OLLAMA_MODEL"; then echo "model already present: $$OLLAMA_MODEL"; else echo "pulling $$OLLAMA_MODEL..."; ollama pull "$$OLLAMA_MODEL"; fi'
+    restart: "no"
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Postgres — session/history persistence
+  # ──────────────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: arch-assistant-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kpmg}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kpmg}
+      POSTGRES_DB: ${POSTGRES_DB:-kpmg_arch}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kpmg} -d ${POSTGRES_DB:-kpmg_arch}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Backend — FastAPI (Phase 2)
+  # ──────────────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: arch-assistant-backend
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-kpmg}:${POSTGRES_PASSWORD:-kpmg}@db:5432/${POSTGRES_DB:-kpmg_arch}
+    depends_on:
+      ollama:
+        condition: service_started
+      db:
+        condition: service_healthy
+    volumes:
+      # Dev hot-reload: mount source. Remove for prod compose.
+      - ./backend:/app
+    restart: unless-stopped
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Frontend — Vite dev server (Phase 3)
+  # ──────────────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: dev
+    container_name: arch-assistant-frontend
+    command: npm run dev
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    env_file:
+      - .env
+    environment:
+      # Vite dev-proxy target inside the Docker network.
+      VITE_API_PROXY_TARGET: http://backend:8000
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+  postgres_data:
