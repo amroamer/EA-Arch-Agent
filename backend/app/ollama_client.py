@@ -113,10 +113,10 @@ async def _stream_impl(
         "model": settings.ollama_model,
         "stream": True,
         "keep_alive": settings.ollama_keep_alive,
-        # Gemma 4 has a reasoning ("thinking") mode that, when triggered,
-        # routes all output into `message.thinking` and leaves
-        # `message.content` empty. We want predictable, streamable
-        # Markdown, so disable thinking.
+        # `think: False` disables Gemma 4's reasoning/thinking mode (which
+        # otherwise routes output into `message.thinking` and leaves
+        # `message.content` empty). On non-thinking models like qwen2.5vl
+        # this flag is silently ignored — safe either way.
         "think": False,
         "messages": _build_messages(
             system_prompt=system_prompt,

@@ -43,7 +43,7 @@ services:
       - ollama_data:/root/.ollama
     environment:
       OLLAMA_HOST: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:26b}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5vl:7b}
     networks:
       - arch-network
     entrypoint: ["/bin/sh", "-c"]

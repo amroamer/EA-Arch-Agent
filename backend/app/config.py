@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # ── Ollama ─────────────────────────────────────────────────────────
     ollama_host: str = "http://ollama:11434"
-    ollama_model: str = "gemma4:26b"
+    ollama_model: str = "qwen2.5vl:7b"
     # int because pydantic accepts -1 / "-1"; -1 means pin in VRAM forever.
     ollama_keep_alive: int = -1
 

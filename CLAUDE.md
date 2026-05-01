@@ -10,7 +10,7 @@ Azure VM. Mirrors the structure used by `Slide-Generator` and `AI-Badges`.
 | Frontend | React 18 + Vite + TypeScript | container `arch-assistant-frontend` |
 | Backend | FastAPI (Python 3.11) | container `arch-assistant-backend` |
 | Database | PostgreSQL 16 | container `arch-assistant-db`, volume `postgres_data` |
-| LLM | Ollama (`gemma4:26b`, ~17 GB) | **shared host daemon** at `host.docker.internal:11434` (NOT a per-app container in prod) |
+| LLM | Ollama (`qwen2.5vl:7b`, ~7 GB) | **shared host daemon** at `host.docker.internal:11434` (NOT a per-app container in prod) |
 | Reverse proxy | nginx | container `arch-assistant-nginx` |
 
 The two app-facing services join the shared docker network
@@ -38,7 +38,7 @@ hotfixes.
 1. **Install Ollama on the host** (one-time per VM):
    ```bash
    curl -fsSL https://ollama.com/install.sh | sh
-   ollama pull gemma4:26b
+   ollama pull qwen2.5vl:7b
    systemctl enable --now ollama
    ```
    Confirm: `curl -s localhost:11434/api/tags | jq`.
@@ -73,7 +73,7 @@ docker logs --tail 100 -f arch-assistant-frontend
 curl -s http://localhost/arch-assistant/api/health | jq
 
 # Force model reload after pulling a newer Gemma
-ollama pull gemma4:26b
+ollama pull qwen2.5vl:7b
 docker restart arch-assistant-backend       # picks up the warmer model
 
 # Database shell

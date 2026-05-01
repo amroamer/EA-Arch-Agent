@@ -32,7 +32,7 @@ Browser ─▶ Nginx (prod, 443) ─▶ /arch-assistant/         ─▶ Frontend
 |----------|-----------------------------------------|
 | Frontend | React 18 + Vite + TypeScript + Tailwind + shadcn/ui |
 | Backend  | FastAPI (Python 3.11) + httpx + SQLAlchemy async |
-| LLM      | Ollama serving `gemma4:26b` (multimodal)|
+| LLM      | Ollama serving `qwen2.5vl:7b` (multimodal) |
 | DB       | PostgreSQL 16                           |
 | Proxy    | Nginx (production)                      |
 | Runtime  | Docker Compose                          |
@@ -84,7 +84,7 @@ the other kpmg apps (Slide-Generator, AI-Badges). Same convention:
   secret).
 - Ollama is **shared**: one daemon on the host serves all apps via
   `host.docker.internal:11434`. Pull the model once per VM with
-  `ollama pull gemma4:26b`.
+  `ollama pull qwen2.5vl:7b`.
 - Compose joins the external `kpmg-infra_kpmg-network` so the central
   router can reach `arch-assistant-frontend` and `arch-assistant-backend`
   by alias.
