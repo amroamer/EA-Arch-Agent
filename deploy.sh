@@ -23,9 +23,17 @@ if [[ ! -f .env.production ]]; then
   exit 1
 fi
 
-echo "[deploy] building and (re)starting services…"
+echo "[deploy] pulling latest images from the registry…"
 # shellcheck disable=SC2086
-docker compose ${COMPOSE_FILES} up -d --build
+docker compose ${COMPOSE_FILES} pull
+# Fallback: in-place build if the registry doesn't have an image for the
+# current commit (e.g., during a hotfix). Comment out the pull above and
+# uncomment the next line to rebuild on the VM.
+# docker compose ${COMPOSE_FILES} up -d --build
+
+echo "[deploy] (re)starting services…"
+# shellcheck disable=SC2086
+docker compose ${COMPOSE_FILES} up -d
 
 echo "[deploy] waiting for backend to become ready…"
 for i in {1..30}; do

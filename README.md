@@ -74,15 +74,44 @@ docker compose up -d
 └── README.md
 ```
 
+## Deployment (Azure VM)
+
+Deployed to a shared Azure Linux VM running docker-compose, alongside
+the other kpmg apps (Slide-Generator, AI-Badges). Same convention:
+- `.github/workflows/deploy.yml` dispatches the
+  [amroamer/kpmg-infra](https://github.com/amroamer/kpmg-infra) deploy
+  workflow on every push to `main` (requires the `INFRA_PAT` repo
+  secret).
+- Ollama is **shared**: one daemon on the host serves all apps via
+  `host.docker.internal:11434`. Pull the model once per VM with
+  `ollama pull gemma4:26b`.
+- Compose joins the external `kpmg-infra_kpmg-network` so the central
+  router can reach `arch-assistant-frontend` and `arch-assistant-backend`
+  by alias.
+- Schema + 11 seed frameworks live in [`migrations/`](migrations/);
+  [`migrations/migrate.sh`](migrations/migrate.sh) runs inside the db
+  container.
+- Operator commands: see [CLAUDE.md](CLAUDE.md).
+
+```bash
+# On the VM:
+cd /opt/EA-Arch-Agent
+git pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
 ## Build status
 
-Phase 1 — Scaffolding & Ollama smoke test ▶ **in progress**
-Phase 2 — Backend (FastAPI + Ollama streaming + sessions DB) ▶ pending
-Phase 3 — Frontend scaffolding ▶ pending
-Phase 4 — Analyze page (4 modes) ▶ pending
+Phase 1 — Scaffolding & Ollama smoke test ▶ ✅ done
+Phase 2 — Backend (FastAPI + Ollama streaming + sessions DB) ▶ ✅ done
+Phase 3 — Frontend scaffolding ▶ ✅ done
+Phase 4 — Analyze page (Quick / Detailed / Persona / User-Driven) ▶ ✅ done
+Phase 4b — Compliance mode (per-framework scorecards + editable) ▶ ✅ done
+Phase 4c — Word-doc upload (.docx with embedded diagram + prose) ▶ ✅ done
 Phase 5 — Compare page ▶ pending
 Phase 6 — Polish & hardening ▶ pending
-Phase 7 — Production deployment ▶ pending
+Phase 7 — Production deployment (alignment with kpmg-infra pattern) ▶ ✅ done
 
 ## Troubleshooting
 

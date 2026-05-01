@@ -21,6 +21,8 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    networks:
+      - arch-network
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 10s
@@ -42,6 +44,8 @@ services:
     environment:
       OLLAMA_HOST: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:26b}
+    networks:
+      - arch-network
     entrypoint: ["/bin/sh", "-c"]
     command:
       - 'until ollama list >/dev/null 2>&1; do echo "waiting for ollama..."; sleep 2; done; if ollama list | awk "NR>1 {print \$1}" | grep -qx "$$OLLAMA_MODEL"; then echo "model already present: $$OLLAMA_MODEL"; else echo "pulling $$OLLAMA_MODEL..."; ollama pull "$$OLLAMA_MODEL"; fi'
@@ -61,6 +65,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - arch-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kpmg} -d ${POSTGRES_DB:-kpmg_arch}"]
       interval: 5s
@@ -91,6 +97,11 @@ services:
     volumes:
       # Dev hot-reload: mount source. Remove for prod compose.
       - ./backend:/app
+    networks:
+      arch-network:
+      kpmg-network:
+        aliases:
+          - arch-assistant-backend
     restart: unless-stopped
 
   # ──────────────────────────────────────────────────────────────────────
@@ -115,8 +126,24 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    networks:
+      arch-network:
+      kpmg-network:
+        aliases:
+          - arch-assistant-frontend
     restart: unless-stopped
 
 volumes:
   ollama_data:
   postgres_data:
+
+networks:
+  # Internal: backend, db, ollama; private to this app.
+  arch-network:
+    driver: bridge
+  # Shared external: cross-app reachability via stable aliases.
+  # Created by `kpmg-infra`'s root compose; provide a fallback create
+  # locally with: `docker network create kpmg-infra_kpmg-network`.
+  kpmg-network:
+    external: true
+    name: kpmg-infra_kpmg-network
