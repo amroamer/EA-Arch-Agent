@@ -239,3 +239,8 @@ export async function deleteFramework(id: string): Promise<void> {
   if (!r.ok && r.status !== 204)
     throw new Error(`DELETE /frameworks/${id} returned ${r.status}`);
 }
+
+/** URL of the all-frameworks Excel export. Setting `window.location` to
+ *  this triggers a normal browser download. */
+export const frameworksExportUrl = (): string =>
+  apiUrl("/frameworks/export.xlsx");

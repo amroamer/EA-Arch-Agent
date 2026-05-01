@@ -19,6 +19,7 @@ import {
   AlertCircle,
   ListChecks,
   Target,
+  Download,
 } from "lucide-react";
 import {
   Card,
@@ -35,6 +36,7 @@ import { cn } from "@/lib/utils";
 import {
   createFramework,
   deleteFramework,
+  frameworksExportUrl,
   getFramework,
   listFrameworks,
   updateFramework,
@@ -246,17 +248,43 @@ export default function FrameworkSettings() {
 
   // ── Render ───────────────────────────────────────────────────────────
 
+  const exportDisabled = !list || list.length === 0;
+
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-kpmg-darkBlue">
-          EA Compliance Framework
-        </h1>
-        <p className="text-gray-600">
-          Define reusable compliance scorecards — frameworks like AWS
-          Well-Architected, TOGAF, or Zero Trust. Each framework holds a list
-          of criteria with planned vs actual weights and a compliance score.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-kpmg-darkBlue">
+            EA Compliance Framework
+          </h1>
+          <p className="text-gray-600">
+            Define reusable compliance scorecards — frameworks like AWS
+            Well-Architected, TOGAF, or Zero Trust. Each framework holds a list
+            of criteria with planned vs actual weights and a compliance score.
+          </p>
+        </div>
+        <Button
+          asChild={!exportDisabled}
+          variant="outline"
+          disabled={exportDisabled}
+          title={
+            exportDisabled
+              ? "No frameworks to export"
+              : "Download all frameworks as a single .xlsx workbook"
+          }
+        >
+          {exportDisabled ? (
+            <span>
+              <Download className="h-4 w-4" />
+              Export to Excel
+            </span>
+          ) : (
+            <a href={frameworksExportUrl()} download>
+              <Download className="h-4 w-4" />
+              Export to Excel
+            </a>
+          )}
+        </Button>
       </div>
 
       {error && (
