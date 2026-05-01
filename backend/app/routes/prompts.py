@@ -24,7 +24,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.db import PromptOverride
-from app.prompts.defaults import DEFAULTS
+from app.prompts.defaults import COMPLIANCE_DEFAULT_VERSION, DEFAULTS
+
+# Per-key default version. Most prompts don't track a version yet; only
+# the ones we've materially revised (and want the UI to nag about) are
+# listed here. Keys NOT in this map return default_version=null from
+# the override-status endpoint, which the UI treats as "no version
+# tracking — banner suppressed".
+_DEFAULT_VERSIONS: dict[str, str] = {
+    "analyze_compliance": COMPLIANCE_DEFAULT_VERSION,
+}
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -50,6 +59,16 @@ class PromptItem(BaseModel):
 
 class PromptUpdate(BaseModel):
     template: str = Field(..., min_length=1, max_length=64_000)
+
+
+class PromptOverrideStatus(BaseModel):
+    """Lightweight status for one prompt — used by the Settings UI to show
+    a 'your override may be stale' banner when the default has been bumped
+    underneath an existing override."""
+
+    key: str
+    has_override: bool
+    default_version: str | None
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
@@ -121,6 +140,28 @@ async def get_prompt(key: str, db: AsyncSession = Depends(get_db)) -> PromptItem
         raise HTTPException(404, f"Unknown prompt key: {key!r}")
     override = await db.get(PromptOverride, key)
     return _row_to_item(key, override)
+
+
+@router.get("/prompts/{key}/override-status", response_model=PromptOverrideStatus)
+async def prompt_override_status(
+    key: str, db: AsyncSession = Depends(get_db)
+) -> PromptOverrideStatus:
+    """Used by the Settings UI to show a 'default has been bumped' banner.
+
+    Returns whether the user has a saved override for this key and the
+    current default's version (when the prompt is version-tracked).
+    Frontend renders the banner iff has_override AND default_version is
+    not null — matches the spec wording 'appears only when an override
+    exists for the compliance prompt'.
+    """
+    if key not in DEFAULTS:
+        raise HTTPException(404, f"Unknown prompt key: {key!r}")
+    override = await db.get(PromptOverride, key)
+    return PromptOverrideStatus(
+        key=key,
+        has_override=override is not None,
+        default_version=_DEFAULT_VERSIONS.get(key),
+    )
 
 
 @router.put("/prompts/{key}", response_model=PromptItem)

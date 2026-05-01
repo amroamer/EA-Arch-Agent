@@ -312,3 +312,18 @@ export async function resetPromptOverride(key: string): Promise<void> {
   if (!r.ok && r.status !== 204)
     throw new Error(`DELETE /prompts/${key} returned ${r.status}`);
 }
+
+export interface PromptOverrideStatus {
+  key: string;
+  has_override: boolean;
+  /** Current default's version, or null if this prompt isn't version-tracked. */
+  default_version: string | null;
+}
+
+export async function getPromptOverrideStatus(
+  key: string,
+): Promise<PromptOverrideStatus> {
+  const r = await fetch(apiUrl(`/prompts/${key}/override-status`));
+  if (!r.ok) throw new Error(`GET /prompts/${key}/override-status returned ${r.status}`);
+  return r.json();
+}

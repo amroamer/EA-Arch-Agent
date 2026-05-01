@@ -17,6 +17,7 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
+  Info,
 } from "lucide-react";
 import {
   Card,
@@ -30,10 +31,12 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
+  getPromptOverrideStatus,
   listPrompts,
   resetPromptOverride,
   savePromptOverride,
   type PromptItem,
+  type PromptOverrideStatus,
 } from "@/lib/api";
 
 export default function PromptsSettings() {
@@ -45,6 +48,11 @@ export default function PromptsSettings() {
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  // Per-key override status; populated for prompts whose default has been
+  // versioned. Used to show a 'default has been bumped' banner.
+  const [overrideStatus, setOverrideStatus] = useState<
+    Record<string, PromptOverrideStatus>
+  >({});
 
   const refresh = useCallback(async () => {
     try {
@@ -79,6 +87,24 @@ export default function PromptsSettings() {
     }
   }, [list, selectedKey]);
 
+  // Pull override-status for the selected prompt. Endpoint is cheap and
+  // tells us whether to show the 'default has been bumped' banner.
+  useEffect(() => {
+    if (!selectedKey) return;
+    if (overrideStatus[selectedKey]) return;  // already fetched
+    let cancelled = false;
+    getPromptOverrideStatus(selectedKey)
+      .then((s) => {
+        if (!cancelled) setOverrideStatus((prev) => ({ ...prev, [selectedKey]: s }));
+      })
+      .catch(() => {
+        // Banner just won't show; no UX harm.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedKey, overrideStatus]);
+
   const selected = useMemo(
     () => list?.find((x) => x.key === selectedKey) ?? null,
     [list, selectedKey],
@@ -100,6 +126,12 @@ export default function PromptsSettings() {
     try {
       await savePromptOverride(selected.key, draft);
       await refresh();
+      // Invalidate the cached override-status so the banner refetches
+      // and updates (now showing has_override=true if it wasn't already).
+      setOverrideStatus((prev) => {
+        const { [selected.key]: _, ...rest } = prev;
+        return rest;
+      });
       setOriginal(draft);
       setSavedAt(Date.now());
     } catch (e) {
@@ -122,6 +154,11 @@ export default function PromptsSettings() {
     try {
       await resetPromptOverride(selected.key);
       await refresh();
+      // Banner state changes (has_override is now false) — invalidate cache.
+      setOverrideStatus((prev) => {
+        const { [selected.key]: _, ...rest } = prev;
+        return rest;
+      });
       setSavedAt(Date.now());
     } catch (e) {
       setError((e as Error).message);
@@ -232,6 +269,34 @@ export default function PromptsSettings() {
               </div>
             ) : (
               <div className="space-y-5">
+                {/* Override-stale banner — shown only when this key has a
+                    saved override AND the default is version-tracked. */}
+                {(() => {
+                  const status = overrideStatus[selected.key];
+                  if (!status?.has_override || !status.default_version) {
+                    return null;
+                  }
+                  return (
+                    <div className="flex items-start gap-3 rounded-md border border-status-yellow/40 bg-status-yellow/10 p-3 text-sm">
+                      <Info className="mt-0.5 h-4 w-4 shrink-0 text-status-yellow" />
+                      <div className="flex-1 text-kpmg-darkBlue">
+                        <p className="font-medium">
+                          The default {selected.name} prompt has been updated
+                          to <span className="font-mono">{status.default_version}</span>.
+                        </p>
+                        <p className="text-xs text-gray-600">
+                          Your saved override is still active and takes
+                          precedence over the new default. Click <strong>Reset
+                          to default</strong> to use the new version, or
+                          review your override against the latest baseline
+                          via the &quot;Show built-in default&quot; section
+                          below.
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Header */}
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
