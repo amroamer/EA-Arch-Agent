@@ -1,8 +1,15 @@
 """Persona-based analysis — view through one of four professional lenses.
 
-Verbatim from PRD §8 `analyze_persona.py`, with persona descriptions
-drawn from the same section.
+The default template (with `{label}` and `{description}` placeholders)
+lives in `app.prompts.defaults.ANALYZE_PERSONA_DEFAULT`. Persona
+descriptions and display labels are still constants in this module —
+they are data about the personas, not about how to analyse, and aren't
+exposed in the prompt-editor UI.
 """
+from __future__ import annotations
+
+from app.prompts.defaults import ANALYZE_PERSONA_DEFAULT as _DEFAULT_TEMPLATE
+
 
 PERSONA_DESCRIPTIONS: dict[str, str] = {
     "data": (
@@ -30,29 +37,19 @@ PERSONA_LABELS: dict[str, str] = {
     "enterprise": "Enterprise Architect",
 }
 
-_TEMPLATE = """You are acting as a {label} reviewing the provided architecture diagram. Apply the lens, priorities, and concerns specific to a {label} role.
 
-PERSONA: {description}
-
-Produce:
-## Persona-Specific Assessment
-What does this architecture look like through the eyes of a {label}?
-
-## Strengths from a {label} Perspective
-
-## Concerns and Gaps from a {label} Perspective
-
-## {label}-Specific Recommendations
-
-## Roadmap
-
-Reference frameworks and standards relevant to the persona (e.g. for Security Architect: NIST CSF, ISO 27001, SDAIA NCA; for Data Architect: DAMA-DMBOK, NDMO; for Network Architect: TOGAF, Zero Trust; for Enterprise Architect: TOGAF, Zachman)."""
-
-
-def build_persona_prompt(persona: str) -> str:
+def build_persona_prompt(persona: str, *, template: str | None = None) -> str:
     if persona not in PERSONA_DESCRIPTIONS:
         raise ValueError(f"Unknown persona: {persona!r}")
-    return _TEMPLATE.format(
+    tpl = template if template is not None else _DEFAULT_TEMPLATE
+    return tpl.format(
         label=PERSONA_LABELS[persona],
         description=PERSONA_DESCRIPTIONS[persona],
     )
+
+
+__all__ = [
+    "PERSONA_DESCRIPTIONS",
+    "PERSONA_LABELS",
+    "build_persona_prompt",
+]

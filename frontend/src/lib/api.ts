@@ -241,3 +241,44 @@ export async function deleteFramework(id: string): Promise<void> {
  *  this triggers a normal browser download. */
 export const frameworksExportUrl = (): string =>
   apiUrl("/frameworks/export.xlsx");
+
+// ── Prompts (Settings → Prompts) ───────────────────────────────────────
+
+export interface PromptItem {
+  key: string;
+  name: string;
+  description: string;
+  placeholders: string[];
+  default_template: string;
+  current_template: string;
+  is_overridden: boolean;
+  updated_at: string | null;
+}
+
+export async function listPrompts(): Promise<PromptItem[]> {
+  const r = await fetch(apiUrl("/prompts"));
+  if (!r.ok) throw new Error(`/prompts returned ${r.status}`);
+  return r.json();
+}
+
+export async function savePromptOverride(
+  key: string,
+  template: string,
+): Promise<PromptItem> {
+  const r = await fetch(apiUrl(`/prompts/${key}`), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ template }),
+  });
+  if (!r.ok) {
+    const detail = await r.text().catch(() => "");
+    throw new Error(`PUT /prompts/${key} returned ${r.status}: ${detail.slice(0, 300)}`);
+  }
+  return r.json();
+}
+
+export async function resetPromptOverride(key: string): Promise<void> {
+  const r = await fetch(apiUrl(`/prompts/${key}`), { method: "DELETE" });
+  if (!r.ok && r.status !== 204)
+    throw new Error(`DELETE /prompts/${key} returned ${r.status}`);
+}

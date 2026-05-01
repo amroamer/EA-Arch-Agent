@@ -1,16 +1,20 @@
 """User-driven analysis — answer the user's specific question only.
 
-Verbatim from PRD §8 `analyze_user_driven.py`.
+The default template (with `{user_prompt}`) lives in
+`app.prompts.defaults.ANALYZE_USER_DRIVEN_DEFAULT`.
 """
+from __future__ import annotations
 
-_TEMPLATE = """You are a senior cloud architect at KPMG. The user has provided a specific question about the architecture diagram. Answer ONLY their question — do not provide unrelated boilerplate analysis.
-
-User question: {user_prompt}
-
-Be specific, reference components visible in the diagram, and structure your answer with Markdown headers if appropriate."""
+from app.prompts.defaults import ANALYZE_USER_DRIVEN_DEFAULT as _DEFAULT_TEMPLATE
 
 
-def build_user_driven_prompt(user_prompt: str) -> str:
+def build_user_driven_prompt(
+    user_prompt: str, *, template: str | None = None
+) -> str:
     if not user_prompt or not user_prompt.strip():
         raise ValueError("user_prompt is required for user_driven mode")
-    return _TEMPLATE.format(user_prompt=user_prompt.strip())
+    tpl = template if template is not None else _DEFAULT_TEMPLATE
+    return tpl.format(user_prompt=user_prompt.strip())
+
+
+__all__ = ["build_user_driven_prompt"]

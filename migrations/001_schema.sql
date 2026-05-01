@@ -69,6 +69,17 @@ CREATE TABLE IF NOT EXISTS public.images (
 
 
 --
+-- Name: prompt_overrides; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE IF NOT EXISTS public.prompt_overrides (
+    key character varying(64) NOT NULL,
+    template text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: sessions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -124,6 +135,18 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'images_pkey') THEN
     ALTER TABLE ONLY public.images
     ADD CONSTRAINT images_pkey PRIMARY KEY (sha256);
+  END IF;
+END $$;
+
+
+--
+-- Name: prompt_overrides prompt_overrides_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'prompt_overrides_pkey') THEN
+    ALTER TABLE ONLY public.prompt_overrides
+    ADD CONSTRAINT prompt_overrides_pkey PRIMARY KEY (key);
   END IF;
 END $$;
 

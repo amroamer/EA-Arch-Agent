@@ -52,7 +52,7 @@ else
 fi
 
 # ── Tables ──
-for tbl in sessions images frameworks framework_items; do
+for tbl in sessions images frameworks framework_items prompt_overrides; do
     n=$(run_sql "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='$tbl';")
     if [ "$n" = "1" ]; then
         ok "Table present: $tbl"

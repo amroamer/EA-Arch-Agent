@@ -1,5 +1,8 @@
 """Compliance-mode prompt — score one architecture against ONE framework.
 
+The default template (with `{framework_name}`, `{criteria_block}`,
+`{max_idx}`) lives in `app.prompts.defaults.ANALYZE_COMPLIANCE_DEFAULT`.
+
 The model is asked to produce two delimited sections per call:
 
     <NARRATIVE>
@@ -22,6 +25,8 @@ The /analyze endpoint runs ONE of these per selected framework, sequentially.
 """
 from __future__ import annotations
 
+from app.prompts.defaults import ANALYZE_COMPLIANCE_DEFAULT as _DEFAULT_TEMPLATE
+
 
 def _format_criteria(items: list[dict]) -> str:
     """Render the framework's items as a numbered list for the prompt."""
@@ -36,6 +41,7 @@ def build_compliance_prompt(
     *,
     framework_name: str,
     items: list[dict],
+    template: str | None = None,
 ) -> str:
     """Return the system prompt for one framework's compliance evaluation.
 
@@ -43,32 +49,12 @@ def build_compliance_prompt(
     The model identifies items by their zero-based index in this list.
     """
     criteria_block = _format_criteria(items)
-    return f"""You are an Enterprise-Architecture compliance auditor. You will be given a single architecture diagram and a numbered list of compliance criteria from the "{framework_name}" framework. Score the architecture against each criterion.
+    tpl = template if template is not None else _DEFAULT_TEMPLATE
+    return tpl.format(
+        framework_name=framework_name,
+        criteria_block=criteria_block,
+        max_idx=max(0, len(items) - 1),
+    )
 
-Produce your response in EXACTLY two delimited sections, in this order:
 
-<NARRATIVE>
-A focused Markdown analysis of how the architecture stacks up against THIS framework's concerns. Cover:
-- Strengths the architecture demonstrates relative to {framework_name}
-- Gaps and risks the criteria expose
-- Concrete recommendations to improve compliance with {framework_name}
-
-Keep it tight — three short sections is plenty. Do NOT mention criterion indices in the narrative.
-</NARRATIVE>
-<SCORECARD>
-A JSON array with EXACTLY one object per criterion, in the original order. Each object has:
-  "idx":             integer (the [N] index from the list below — must be unique and 0..{len(items) - 1})
-  "compliance_pct":  one of 100, 50, 0, or null
-                       100  = Compliant (fully satisfied by the architecture)
-                       50   = Partially Compliant
-                       0    = Not Compliant
-                       null = Not Applicable to this architecture
-  "remarks":         short text (≤200 chars) explaining the score; cite specifics from the diagram
-
-Return the array on a single line if possible, but it's OK to break across lines per object. Output ONLY the JSON — no commentary, no code fences inside this section.
-</SCORECARD>
-
-Compliance criteria for "{framework_name}":
-{criteria_block}
-
-Output ONLY the two delimited sections. Do not add any preamble, code fences, or extra text outside them."""
+__all__ = ["build_compliance_prompt"]

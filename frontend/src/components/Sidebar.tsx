@@ -10,7 +10,7 @@ const NAV = [
     ? [{ to: "/compare", label: "Compare", icon: GitCompare, end: false }]
     : []),
   { to: "/history", label: "History", icon: History, end: false },
-  { to: "/settings/frameworks", label: "Settings", icon: Settings, end: false },
+  { to: "/settings", label: "Settings", icon: Settings, end: false },
 ];
 
 export function Sidebar() {

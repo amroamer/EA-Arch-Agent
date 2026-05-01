@@ -139,6 +139,25 @@ class FrameworkItem(Base):
     framework: Mapped["Framework"] = relationship(back_populates="items")
 
 
+class PromptOverride(Base):
+    """User-saved override for one of the built-in prompt templates.
+
+    Defaults live in app/prompts/defaults.py (Python source). When a row
+    exists here, its `template` is preferred over the default. "Reset to
+    default" simply deletes the row.
+    """
+
+    __tablename__ = "prompt_overrides"
+
+    # Stable key matching app.prompts.defaults.DEFAULTS — e.g.
+    # 'analyze_quick', 'analyze_compliance'. Acts as primary key.
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    template: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now_utc, onupdate=_now_utc, nullable=False
+    )
+
+
 class Image(Base):
     """Content-addressable image storage.
 

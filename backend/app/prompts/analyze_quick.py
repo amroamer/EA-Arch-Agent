@@ -1,21 +1,23 @@
 """Quick analysis — concise high-level review under ~600 words.
 
-Verbatim from PRD §8 `analyze_quick.py`.
+The default template lives in `app.prompts.defaults.ANALYZE_QUICK_DEFAULT`.
+At request time, the analyze route calls `fetch_template(db,
+"analyze_quick")` which honours the user's saved override (Settings →
+Prompts) before falling back to the default. The route then passes that
+string in here as the `template` kwarg.
+
+`PROMPT` (the default value, kept for any importer that wants the
+constant directly) is re-exported from defaults for backwards
+compatibility.
 """
+from __future__ import annotations
 
-PROMPT = """You are a senior cloud architect at KPMG. Analyze the provided architecture diagram and produce a CONCISE high-level review.
+from app.prompts.defaults import ANALYZE_QUICK_DEFAULT as PROMPT
 
-Output exactly these sections (use Markdown headers):
-## Architecture Overview
-A 2-3 sentence description of what this architecture does.
 
-## Key Strengths
-3-5 bullets.
+def build_quick_prompt(*, template: str | None = None) -> str:
+    """Quick mode has no placeholders — return the resolved template as-is."""
+    return template if template is not None else PROMPT
 
-## Top Concerns
-3-5 bullets identifying the most pressing gaps or risks.
 
-## Recommended Next Steps
-3-5 actionable bullets.
-
-Keep total output under 600 words. Be specific about cloud services, components, and data flows visible in the diagram."""
+__all__ = ["PROMPT", "build_quick_prompt"]

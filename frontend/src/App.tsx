@@ -5,7 +5,9 @@ import Analyze from "@/pages/Analyze";
 import Compare from "@/pages/Compare";
 import History from "@/pages/History";
 import SessionDetail from "@/pages/SessionDetail";
+import SettingsLayout from "@/pages/SettingsLayout";
 import FrameworkSettings from "@/pages/FrameworkSettings";
+import PromptsSettings from "@/pages/PromptsSettings";
 import { COMPARE_ENABLED } from "@/lib/features";
 
 export default function App() {
@@ -20,9 +22,12 @@ export default function App() {
         />
         <Route path="/history" element={<History />} />
         <Route path="/history/:id" element={<SessionDetail />} />
-        <Route path="/settings" element={<FrameworkSettings />} />
-        <Route path="/settings/frameworks" element={<FrameworkSettings />} />
-        <Route path="/settings/frameworks/:id" element={<FrameworkSettings />} />
+        <Route path="/settings" element={<SettingsLayout />}>
+          <Route index element={<Navigate to="frameworks" replace />} />
+          <Route path="frameworks" element={<FrameworkSettings />} />
+          <Route path="frameworks/:id" element={<FrameworkSettings />} />
+          <Route path="prompts" element={<PromptsSettings />} />
+        </Route>
         <Route
           path="*"
           element={

@@ -1,31 +1,30 @@
 """Detailed analysis — full deep-dive across six dimensions.
 
-Verbatim from PRD §8 `analyze_detailed.py`. The optional focus_areas
-list is appended at runtime by `build_detailed_prompt` if provided.
+The default template lives in `app.prompts.defaults.ANALYZE_DETAILED_DEFAULT`.
+The user-selected `focus_areas` list is APPENDED at runtime (not part of
+the template body) so the user-editable prompt stays focused on the
+analysis structure.
 """
+from __future__ import annotations
 
-PROMPT = """You are a senior cloud architect at KPMG conducting a deep-dive architectural review. Analyze the provided diagram thoroughly.
-
-For each of these dimensions, produce three subsections — Findings, Gaps & Opportunities for Improvement, and Roadmap:
-1. Security
-2. Availability
-3. Scalability
-4. Performance
-5. Cost Optimization
-6. Operational Excellence
-
-Close with a ## Summary section synthesizing the overall posture and top 3 priorities.
-
-Use Markdown formatting. Be specific to the components visible in the diagram. Reference industry best practices (AWS Well-Architected, Azure CAF, NIST) where applicable. If a focus_areas filter was provided, prioritize those dimensions but still cover the others briefly."""
+from app.prompts.defaults import ANALYZE_DETAILED_DEFAULT as PROMPT
 
 
-def build_detailed_prompt(focus_areas: list[str] | None = None) -> str:
-    """Append a focus-areas hint to the base prompt if any are selected."""
+def build_detailed_prompt(
+    focus_areas: list[str] | None = None,
+    *,
+    template: str | None = None,
+) -> str:
+    """Append a focus-areas hint to the resolved template if any are selected."""
+    base = template if template is not None else PROMPT
     if not focus_areas:
-        return PROMPT
+        return base
     formatted = ", ".join(focus_areas)
     return (
-        PROMPT
+        base
         + f"\n\nThe user has prioritized these focus areas: {formatted}. "
         "Spend more depth on these dimensions, but still touch on the others briefly."
     )
+
+
+__all__ = ["PROMPT", "build_detailed_prompt"]

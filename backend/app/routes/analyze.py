@@ -30,12 +30,13 @@ from app.models.db import Framework, Session
 from app.models.requests import AnalysisMode, Persona, SessionStatus, SessionType
 from app.ollama_client import stream_chat
 from app.prompts import (
-    ANALYZE_QUICK,
     build_compliance_prompt,
     build_persona_prompt,
     build_user_driven_prompt,
 )
 from app.prompts.analyze_detailed import build_detailed_prompt
+from app.prompts.analyze_quick import build_quick_prompt
+from app.prompts.store import fetch_template
 from app.services.image_store import upsert_image
 from app.utils.compliance_parser import (
     ComplianceStreamParser,
@@ -171,31 +172,39 @@ def _ctx_for(doc_text: str | None) -> int:
     return 16_384 if doc_text else 8_192
 
 
-def _resolve_prompt(
+async def _resolve_prompt(
     *,
     mode: AnalysisMode,
     persona: Persona | None,
     focus_areas: list[str] | None,
     user_prompt: str | None,
+    db: AsyncSession,
 ) -> tuple[str, str]:
     """Return (system_prompt, user_prompt_for_model).
+
+    Each mode fetches its template from prompt_overrides (DB) with the
+    Python default as fallback, so user customisations from
+    Settings → Prompts take effect on the next request.
 
     The "user prompt for model" is the second user-message text; for modes
     other than user_driven it's a short instruction nudging the model to
     produce the structured output described in the system prompt.
     """
     if mode == AnalysisMode.QUICK:
-        return ANALYZE_QUICK, "Produce the analysis as instructed."
+        tpl = await fetch_template(db, "analyze_quick")
+        return build_quick_prompt(template=tpl), "Produce the analysis as instructed."
     if mode == AnalysisMode.DETAILED:
+        tpl = await fetch_template(db, "analyze_detailed")
         return (
-            build_detailed_prompt(focus_areas),
+            build_detailed_prompt(focus_areas, template=tpl),
             "Produce the detailed analysis as instructed.",
         )
     if mode == AnalysisMode.PERSONA:
         if not persona:
             raise HTTPException(400, "persona is required when mode=persona")
+        tpl = await fetch_template(db, "analyze_persona")
         return (
-            build_persona_prompt(persona.value),
+            build_persona_prompt(persona.value, template=tpl),
             "Produce the persona-specific analysis as instructed.",
         )
     if mode == AnalysisMode.USER_DRIVEN:
@@ -203,8 +212,9 @@ def _resolve_prompt(
             raise HTTPException(
                 400, "user_prompt is required when mode=user_driven"
             )
+        tpl = await fetch_template(db, "analyze_user_driven")
         return (
-            build_user_driven_prompt(user_prompt),
+            build_user_driven_prompt(user_prompt, template=tpl),
             user_prompt.strip(),
         )
     raise HTTPException(400, f"Unknown mode: {mode}")
@@ -245,11 +255,12 @@ async def analyze(
         )
 
     parsed_focus = _parse_focus_areas(focus_areas)
-    system_prompt, user_msg = _resolve_prompt(
+    system_prompt, user_msg = await _resolve_prompt(
         mode=mode,
         persona=persona,
         focus_areas=parsed_focus,
         user_prompt=user_prompt,
+        db=db,
     )
     user_msg = _augment_user_msg(user_msg, doc_text)
 
@@ -436,6 +447,11 @@ async def _run_compliance(
     await db.refresh(sess)
     session_id = sess.id
 
+    # Resolve the compliance template ONCE per request (not per framework).
+    # The template is identical across frameworks within a single run; the
+    # framework-specific bits are injected via .format() in the builder.
+    compliance_template = await fetch_template(db, "analyze_compliance")
+
     logger.info(
         "compliance_started",
         extra={
@@ -496,6 +512,7 @@ async def _run_compliance(
                 system_prompt = build_compliance_prompt(
                     framework_name=fw.name,
                     items=items_for_prompt,
+                    template=compliance_template,
                 )
                 # The "user" message is a short nudge; the heavy lifting is
                 # in the system prompt + the framework's criteria block.
