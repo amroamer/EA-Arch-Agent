@@ -167,9 +167,6 @@ export interface FrameworkItem {
   id?: string;
   criteria: string;
   weight_planned: number;
-  weight_actual: number;
-  compliance_pct: number;
-  remarks: string | null;
   sort_order: number;
 }
 

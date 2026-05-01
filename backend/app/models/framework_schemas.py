@@ -11,9 +11,6 @@ class FrameworkItemBase(BaseModel):
 
     criteria: str = Field(..., min_length=1, max_length=4000)
     weight_planned: float = Field(0.0, ge=0, le=100)
-    weight_actual: float = Field(0.0, ge=0, le=100)
-    compliance_pct: float = Field(0.0, ge=0, le=100)
-    remarks: str | None = Field(None, max_length=4000)
     sort_order: int = 0
 
 

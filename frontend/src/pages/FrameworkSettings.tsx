@@ -51,9 +51,6 @@ function emptyItem(sort_order: number): FrameworkItem {
   return {
     criteria: "",
     weight_planned: 0,
-    weight_actual: 0,
-    compliance_pct: 0,
-    remarks: null,
     sort_order,
   };
 }

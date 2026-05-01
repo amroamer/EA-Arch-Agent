@@ -128,14 +128,11 @@ class FrameworkItem(Base):
     )
 
     criteria: Mapped[str] = mapped_column(Text, nullable=False)
-    # Weights are percentages (0-100). Planned = target weight in the
-    # framework, Actual = achieved weight observed in the architecture.
+    # Planned weight (0-100): the criterion's importance within the
+    # framework. Per-analysis values (actual weight, compliance %, remarks)
+    # are NOT stored here — they live on Session.scorecards (JSON) so each
+    # analysis instance has its own scorecard without mutating the template.
     weight_planned: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    weight_actual: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    # Compliance with the criterion as a 0-100 percentage. The frontend
-    # renders a traffic-light badge: 80+ green, 50-79 yellow, <50 red.
-    compliance_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    remarks: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 

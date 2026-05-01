@@ -36,9 +36,6 @@ CREATE TABLE IF NOT EXISTS public.framework_items (
     framework_id character varying(36) NOT NULL,
     criteria text NOT NULL,
     weight_planned double precision NOT NULL,
-    weight_actual double precision NOT NULL,
-    compliance_pct double precision NOT NULL,
-    remarks text,
     sort_order integer NOT NULL
 );
 

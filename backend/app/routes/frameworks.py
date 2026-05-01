@@ -50,9 +50,6 @@ def _replace_items(
         FrameworkItem(
             criteria=it.criteria,
             weight_planned=it.weight_planned,
-            weight_actual=it.weight_actual,
-            compliance_pct=it.compliance_pct,
-            remarks=it.remarks,
             sort_order=idx if it.sort_order == 0 else it.sort_order,
         )
         for idx, it in enumerate(items)
@@ -190,14 +187,14 @@ def _build_workbook(frameworks: list[Framework]) -> bytes:
     cover.column_dimensions["D"].width = 22
 
     # ── Per-framework sheets ──
+    # Framework templates carry only criteria + planned weight. Per-analysis
+    # values (actual weight, compliance %, remarks) live on Session.scorecards
+    # and are out of scope for this export.
     used: set[str] = {"cover page"}
     columns = [
         ("#", 5),
-        ("Criteria", 70),
-        ("Weight (planned)", 16),
-        ("Weight (actual)", 16),
-        ("Compliance %", 14),
-        ("Remarks", 40),
+        ("Criteria", 80),
+        ("Weight (%)", 14),
     ]
 
     for fw in frameworks:
@@ -224,19 +221,13 @@ def _build_workbook(frameworks: list[Framework]) -> bytes:
         # Criteria rows.
         items = sorted(fw.items, key=lambda it: it.sort_order)
         total_planned = 0.0
-        total_actual = 0.0
         for i, it in enumerate(items, start=1):
             r = 3 + i
             wp = float(it.weight_planned or 0)
-            wa = float(it.weight_actual or 0)
             total_planned += wp
-            total_actual += wa
             ws.cell(row=r, column=1, value=i).alignment = num_align
             ws.cell(row=r, column=2, value=it.criteria).alignment = body_align
             ws.cell(row=r, column=3, value=wp).alignment = num_align
-            ws.cell(row=r, column=4, value=wa).alignment = num_align
-            ws.cell(row=r, column=5, value=float(it.compliance_pct or 0)).alignment = num_align
-            ws.cell(row=r, column=6, value=it.remarks or "").alignment = body_align
             for col in range(1, len(columns) + 1):
                 ws.cell(row=r, column=col).border = border
 
@@ -247,11 +238,10 @@ def _build_workbook(frameworks: list[Framework]) -> bytes:
             label.font = totals_font
             label.fill = totals_fill
             label.alignment = Alignment(horizontal="right", vertical="center")
-            for col, val in [(3, round(total_planned, 2)), (4, round(total_actual, 2))]:
-                c = ws.cell(row=r, column=col, value=val)
-                c.font = totals_font
-                c.fill = totals_fill
-                c.alignment = num_align
+            tot = ws.cell(row=r, column=3, value=round(total_planned, 2))
+            tot.font = totals_font
+            tot.fill = totals_fill
+            tot.alignment = num_align
             for col in range(1, len(columns) + 1):
                 ws.cell(row=r, column=col).fill = totals_fill
                 ws.cell(row=r, column=col).border = border
