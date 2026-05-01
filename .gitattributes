@@ -1,0 +1,5 @@
+# Pin shell scripts and SQL files to LF — these will be executed inside
+# Linux containers; CRLF endings break sh/psql.
+*.sh    text eol=lf
+*.sql   text eol=lf
+deploy.sh text eol=lf
