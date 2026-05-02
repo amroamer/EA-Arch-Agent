@@ -50,6 +50,16 @@ from app.utils.compliance_parser import (
     compute_weighted_score,
 )
 from app.utils.compliance_rules import _enforce_evidence_rule
+from app.utils.compliance_validation import (
+    NOTE_BACKFILLED,
+    RETRY_THRESHOLD,
+    ScorecardRow,
+    apply_evidence_rule,
+    build_evidence_index,
+    validate_or_retry,
+    verify_citations,
+)
+from pydantic import ValidationError
 from app.utils.docx_utils import (
     DocxExtractionError,
     extract_docx,
@@ -479,6 +489,15 @@ async def _run_compliance(
         },
     )
 
+    # Build the document evidence index ONCE per analysis run. The index
+    # is shared across all selected frameworks — citation verification is
+    # the same regardless of which framework's criterion is being scored.
+    # Indexing the FULL extracted doc (not the 30 KB-truncated copy sent
+    # to Ollama) so legitimate citations from the visible portion don't
+    # get false-positive flagged when the doc happens to mention an ADR
+    # twice.
+    evidence = build_evidence_index(doc_text or "")
+
     async def event_generator() -> AsyncIterator[bytes]:
         yield _sse_event({"type": "session_created", "id": session_id})
 
@@ -503,9 +522,6 @@ async def _run_compliance(
                     }
                     for it in fw_items
                 ]
-                # Per-framework collection bag for the saved scorecard.
-                row_by_idx: dict[int, dict] = {}
-
                 yield _sse_event(
                     {
                         "type": "framework_started",
@@ -538,6 +554,15 @@ async def _run_compliance(
                 user_msg = _augment_user_msg(user_msg, doc_text)
 
                 parser = ComplianceStreamParser()
+
+                # Buffers for the validation layer — kept in sync with what
+                # we emit during streaming, then handed to validate_or_retry
+                # after the stream finishes.
+                raw_rows: list[dict] = []           # parsed-but-unvalidated rows
+                emitted_idxs: set[int] = set()      # idxs we've already SSE'd
+                rows_by_idx: dict[int, ScorecardRow] = {}
+                auto_modified_idxs: set[int] = set()
+
                 async for evt in stream_chat(
                     system_prompt=system_prompt,
                     user_prompt=user_msg,
@@ -558,28 +583,52 @@ async def _run_compliance(
                                     }
                                 )
                             elif parsed["type"] == "scorecard_row":
+                                # Buffer the raw row for the post-stream
+                                # retry decision regardless of whether it
+                                # validates — bad rows count toward the
+                                # failure-rate threshold.
+                                raw_row = {
+                                    "idx": parsed["idx"],
+                                    "compliance_pct": parsed["compliance_pct"],
+                                    "remarks": parsed["remarks"] or "",
+                                }
+                                raw_rows.append(raw_row)
+
                                 idx = parsed["idx"]
-                                if 0 <= idx < len(fw_items):
-                                    src = fw_items[idx]
-                                    row_by_idx[idx] = {
-                                        "framework_item_id": src.id,
-                                        "criteria": src.criteria,
-                                        "weight_planned": float(src.weight_planned or 0),
-                                        "compliance_pct": parsed["compliance_pct"],
-                                        "remarks": parsed["remarks"],
+                                if not (0 <= idx < len(fw_items)):
+                                    continue
+
+                                # Per-row validation hook: coerce → citation
+                                # check → evidence-rule downgrade. Bad rows
+                                # are NOT emitted; they live in raw_rows for
+                                # the retry path.
+                                try:
+                                    validated = ScorecardRow.model_validate(raw_row)
+                                except ValidationError:
+                                    continue
+
+                                check = verify_citations(validated.remarks, evidence)
+                                final_row, was_modified = apply_evidence_rule(
+                                    validated, check
+                                )
+                                rows_by_idx[final_row.idx] = final_row
+                                if was_modified:
+                                    auto_modified_idxs.add(final_row.idx)
+                                emitted_idxs.add(final_row.idx)
+
+                                yield _sse_event(
+                                    {
+                                        "type": "scorecard_row",
+                                        "framework_id": fw.id,
+                                        "idx": final_row.idx,
+                                        "compliance_pct": final_row.compliance_pct,
+                                        "remarks": final_row.remarks,
+                                        "auto_modified": was_modified,
                                     }
-                                    yield _sse_event(
-                                        {
-                                            "type": "scorecard_row",
-                                            "framework_id": fw.id,
-                                            "idx": idx,
-                                            "compliance_pct": parsed["compliance_pct"],
-                                            "remarks": parsed["remarks"],
-                                        }
-                                    )
+                                )
                     elif et == "done":
-                        # Per-framework done: flush parser, fill missing rows,
-                        # compute weighted score, emit framework_done.
+                        # Per-framework done: flush parser, decide on retry,
+                        # then assemble + persist the final scorecard.
                         for parsed in parser.flush():
                             yield _sse_event(
                                 {
@@ -588,18 +637,102 @@ async def _run_compliance(
                                     "content": parsed["content"],
                                 }
                             )
-                        # Backfill any criteria the model didn't score with
-                        # null/N-A so the saved scorecard is complete.
+
+                        # Post-stream validation pass — calls Ollama at most
+                        # once more if the failure rate breaches the
+                        # threshold. The closure captures everything the
+                        # retry call needs.
+                        async def _retry_caller(retry_prompt: str) -> list[dict]:
+                            recovered: list[dict] = []
+                            r_parser = ComplianceStreamParser()
+                            async for revt in stream_chat(
+                                system_prompt=system_prompt,
+                                user_prompt=retry_prompt,
+                                images_b64=[processed.b64] if processed else [],
+                                temperature=0.1,
+                                num_ctx=16_384,
+                                num_predict=4000,
+                            ):
+                                rt = revt["type"]
+                                if rt == "token":
+                                    for rp in r_parser.feed(revt["content"]):
+                                        if rp["type"] == "scorecard_row":
+                                            recovered.append(
+                                                {
+                                                    "idx": rp["idx"],
+                                                    "compliance_pct": rp[
+                                                        "compliance_pct"
+                                                    ],
+                                                    "remarks": rp["remarks"] or "",
+                                                }
+                                            )
+                                elif rt == "done":
+                                    break
+                                elif rt == "error":
+                                    break
+                            return recovered
+
+                        outcome = await validate_or_retry(
+                            raw_rows=raw_rows,
+                            expected_count=len(fw_items),
+                            framework_name=fw.name,
+                            evidence=evidence,
+                            ollama_caller=_retry_caller,
+                        )
+
+                        # Emit any rows the retry recovered that we hadn't
+                        # already streamed. Frontend handles re-emission of
+                        # an existing idx by overwriting (state derived from
+                        # cumulative events).
+                        for idx, row in outcome.rows_by_idx.items():
+                            already = idx in emitted_idxs
+                            existing = rows_by_idx.get(idx)
+                            if already and existing == row:
+                                continue
+                            rows_by_idx[idx] = row
+                            was_modified = idx in outcome.auto_modified_idxs
+                            if was_modified:
+                                auto_modified_idxs.add(idx)
+                            yield _sse_event(
+                                {
+                                    "type": "scorecard_row",
+                                    "framework_id": fw.id,
+                                    "idx": idx,
+                                    "compliance_pct": row.compliance_pct,
+                                    "remarks": row.remarks,
+                                    "auto_modified": was_modified,
+                                }
+                            )
+                            emitted_idxs.add(idx)
+
+                        # Build the final saved scorecard from the validator's
+                        # outcome + null-backfill anything still missing.
                         items_full = []
                         for i, src in enumerate(fw_items):
-                            row = row_by_idx.get(i) or {
-                                "framework_item_id": src.id,
-                                "criteria": src.criteria,
-                                "weight_planned": float(src.weight_planned or 0),
-                                "compliance_pct": None,
-                                "remarks": None,
-                            }
-                            items_full.append(row)
+                            r = outcome.rows_by_idx.get(i)
+                            if r is not None:
+                                items_full.append(
+                                    {
+                                        "framework_item_id": src.id,
+                                        "criteria": src.criteria,
+                                        "weight_planned": float(src.weight_planned or 0),
+                                        "compliance_pct": r.compliance_pct,
+                                        "remarks": r.remarks,
+                                    }
+                                )
+                            else:
+                                # Either parse-failed and retry didn't fix
+                                # it, or the model never produced this idx.
+                                items_full.append(
+                                    {
+                                        "framework_item_id": src.id,
+                                        "criteria": src.criteria,
+                                        "weight_planned": float(src.weight_planned or 0),
+                                        "compliance_pct": None,
+                                        "remarks": NOTE_BACKFILLED,
+                                    }
+                                )
+
                         weighted = compute_weighted_score(items_full)
                         scorecards.append(
                             {
@@ -619,6 +752,18 @@ async def _run_compliance(
                                 "framework_id": fw.id,
                                 "weighted_score": round(weighted, 2),
                             }
+                        )
+
+                        logger.info(
+                            "compliance_validation",
+                            extra={
+                                "framework_id": fw.id,
+                                "expected": len(fw_items),
+                                "emitted": len(emitted_idxs),
+                                "auto_modified": len(auto_modified_idxs),
+                                "retry_used": outcome.retry_used,
+                                "missing_after_validation": len(outcome.missing_idxs),
+                            },
                         )
                     elif et == "error":
                         had_error = True

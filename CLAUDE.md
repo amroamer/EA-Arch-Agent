@@ -1,5 +1,96 @@
 # EA Arch Agent — Operator Notes
 
+## Compliance validation layer — verification observations
+
+**Date:** 2026-05-02 · **Mode:** `scoring_mode=single_pass` · **Doc:**
+`NCGR-CSP-SAD-001_Variant-A_Strong.docx` · **Model:** `qwen2.5vl:7b`.
+
+The validation layer (`backend/app/utils/compliance_validation.py`)
+inserts three checks between Ollama's output and the SSE stream:
+Pydantic schema → citation verification → evidence-rule downgrade,
+plus a post-stream `validate_or_retry` that re-prompts Ollama once if
+the first attempt fails ≥30% of rows or skips indices.
+
+### Test 1 — Synthetic hallucination
+
+**Setup:** Saved a malicious override on `analyze_compliance` instructing
+the model to score every criterion 100 with `"As specified in ADR-9999."`
+(ADR-9999 does not appear in the document).
+
+**Result:** The streamed `scorecard_row` event for row 0 carried
+`auto_modified: true`. The remarks field contained the server note
+`[auto-downgraded: cited ADR-9999 not found in document]`. Override
+deleted; defaults restored.
+
+**Conclusion:** Citation verification correctly rejects fabricated ADR
+identifiers. The downgrade-on-fabrication path works end-to-end.
+
+### Test 2 — Real run, no-citation case (Cloud, 4 criteria)
+
+**Setup:** Default v2 prompt, no overrides, `scoring_mode=single_pass`,
+Cloud Compliance Check (4 criteria), Variant-A Strong as input.
+
+**Result:** **All 4 rows had `auto_modified: true`**. The model emitted
+non-categorical pct values (snapped via Pydantic to 100 for all four)
+and **vague remarks** like *"The architecture explicitly addresses cloud
+assessment and deployment model alignment with the NCGR…"* — no
+ADR id, no §-number, no Table-N citation. The validator caught all
+four and downgraded each to 50, appending the no-citation note. Final
+weighted score: **50.0** (would have been 100 without the validator).
+
+**Conclusion:** When the model produces narrative-only Compliant
+verdicts without explicit citations, the validator forces them down to
+Partial. This is the load-bearing change of this PR — vague
+"looks-compliant" verdicts are no longer credible enough to ship to a
+client.
+
+### Test 3 — Schema rejection (unit-tested)
+
+42 unit tests in `test_compliance_validation.py` cover:
+
+- Pydantic snap-to-bucket (75 → 50, 76 → 100, 25 → 0, etc.)
+- Rejection of non-numeric `compliance_pct` (e.g. `"high"`) and bool
+- Empty / overlong `remarks`
+- ADR / table / section regex extraction from real docs
+- Placeholder-text recognition (`ADR-NNN` not flagged as a citation)
+- `apply_evidence_rule`: pass-through for 50/0/null; downgrade for 100
+  with no citation or fabricated-only citations; truncation when the
+  appended note would push past 500 chars
+- `validate_or_retry`: zero retries on a clean run, one retry when
+  failure rate ≥30%, hard cap at 2 calls total, "first-attempt
+  preserved if retry doesn't help" semantics
+
+### Performance note
+
+Single-pass + v2 prompt + 5-criterion framework + retry is **slow**
+on qwen2.5vl 7B (~2 minutes worst case). The v2 prompt is verbose
+(rubric + reasoning discipline + JSON-format rules) and when the model
+under-emits rows (common — the v2 prompt makes it cautious), the
+30%-threshold trips and adds another full Ollama round-trip. On
+4-criterion frameworks (Cloud) it stays fast (~9s, no retry).
+
+**Operational consequence:** for any framework with ≥5 criteria
+running on a long doc, prefer `scoring_mode=per_criterion` — it's
+both faster (parallel-feeling, ~5s per criterion) and more accurate
+(focused prompt per criterion produces real ADR citations naturally).
+The single-pass + v2 + validator combo is the *defensible* path, not
+the *fast* path.
+
+### What the consultant sees in the UI
+
+A scored row with `auto_modified=true` renders with:
+- Yellow tint on the row background
+- `Auto-adjusted` pill above the compliance dropdown (info icon)
+- The auto-note string is included in `remarks` and shown in the
+  hover tooltip and the editable textarea — so the consultant
+  immediately sees *why* the server flagged it.
+
+The flag is for streaming display only; saved scorecards
+(`Session.scorecards` JSON) do not persist the boolean. Schema
+unchanged for downstream consumers.
+
+---
+
 ## Compliance prompt v2 — before/after observations
 
 **Date:** 2026-05-02 · **Document:** `NCGR-CSP-SAD-001_Variant-A_Strong.docx`

@@ -19,6 +19,7 @@ import {
   CheckCircle2,
   Save,
   Target,
+  Info,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -47,6 +48,8 @@ interface RowState {
   evidence?: string | null;
   remarks: string | null | undefined;
   status: RowStatus;
+  /** Server flagged this row in single-pass mode (auto-downgrade / backfill). */
+  auto_modified?: boolean;
 }
 
 interface FrameworkState {
@@ -152,7 +155,8 @@ function deriveFromEvents(events: StreamEvent[]): FrameworkState[] {
       const fw = map.get(evt.framework_id);
       if (fw) fw.narrative += evt.content;
     } else if (evt.type === "scorecard_row") {
-      // single_pass-only: this row is now done.
+      // single_pass-only: this row is now done. Re-emissions for the same
+      // idx (retry-recovered rows) overwrite — last-write-wins.
       const fw = map.get(evt.framework_id);
       if (fw && evt.idx >= 0 && evt.idx < fw.rows.length) {
         fw.rows[evt.idx] = {
@@ -160,6 +164,7 @@ function deriveFromEvents(events: StreamEvent[]): FrameworkState[] {
           compliance_pct: evt.compliance_pct,
           remarks: evt.remarks,
           status: "done",
+          auto_modified: !!evt.auto_modified,
         };
       }
     } else if (evt.type === "criterion_started") {
@@ -447,7 +452,13 @@ function FrameworkCard({ fw, rows, score, editable, onUpdateRow }: CardProps) {
                   r.evidence.trim() &&
                   r.evidence.trim().toLowerCase() !== "none";
                 return (
-                  <tr key={idx} className="align-top">
+                  <tr
+                    key={idx}
+                    className={cn(
+                      "align-top",
+                      r.auto_modified && "bg-status-yellow/5",
+                    )}
+                  >
                     <td className="p-3 pt-3.5 text-center">
                       <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-kpmg-blue/10 text-xs font-semibold text-kpmg-blue tabular-nums">
                         {idx + 1}
@@ -460,6 +471,18 @@ function FrameworkCard({ fw, rows, score, editable, onUpdateRow }: CardProps) {
                       {r.weight_planned.toFixed(1)}
                     </td>
                     <td className="px-3 py-2">
+                      {/* Auto-adjusted badge — server flagged this row.
+                          Tooltip shows the (auto-note-augmented) remarks
+                          so the consultant can see WHY at a glance. */}
+                      {r.auto_modified && r.status === "done" && (
+                        <span
+                          className="mb-1 inline-flex items-center gap-1 rounded-full bg-status-yellow/20 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-kpmg-darkBlue"
+                          title={r.remarks ?? ""}
+                        >
+                          <Info className="h-2.5 w-2.5" />
+                          Auto-adjusted
+                        </span>
+                      )}
                       {/* Compliance column — state machine driven */}
                       {r.status === "queued" ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">

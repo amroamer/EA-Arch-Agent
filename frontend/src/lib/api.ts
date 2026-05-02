@@ -140,6 +140,10 @@ export type StreamEvent =
       idx: number;
       compliance_pct: number | null;
       remarks: string | null;
+      /** Server flagged this row: auto-downgraded by the evidence rule
+       *  or backfilled because the model never returned a verdict.
+       *  Streaming display only — not persisted on the saved scorecard. */
+      auto_modified?: boolean;
     }
   // ── per_criterion-only events ──
   | {
