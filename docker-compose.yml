@@ -85,7 +85,12 @@ services:
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     env_file:
-      - .env
+      - path: .env
+        required: true
+      # Personal local overrides — gitignored. Compose v2 honours
+      # required:false so missing file is not an error.
+      - path: .env.local
+        required: false
     environment:
       OLLAMA_HOST: http://ollama:11434
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-kpmg}:${POSTGRES_PASSWORD:-kpmg}@db:5432/${POSTGRES_DB:-kpmg_arch}
@@ -117,7 +122,10 @@ services:
     ports:
       - "${FRONTEND_PORT:-5173}:5173"
     env_file:
-      - .env
+      - path: .env
+        required: true
+      - path: .env.local
+        required: false
     environment:
       # Vite dev-proxy target inside the Docker network.
       VITE_API_PROXY_TARGET: http://backend:8000

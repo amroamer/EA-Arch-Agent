@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import settings
+from app.config import settings, validate_critical_settings
 from app.database import init_db
 from app.logging_config import configure_logging
 from app.routes import (
@@ -34,15 +34,22 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Run init_db on startup so the app works on first run without
-    requiring `alembic upgrade head`. In prod, prefer Alembic migrations."""
+    """Run startup checks: env-var validation, then DB init.
+
+    - validate_critical_settings raises if DATABASE_URL or OLLAMA_HOST are
+      still placeholders (deploy misconfiguration). Non-critical missing
+      vars log a warning but don't crash the container.
+    - init_db is best-effort: a transient DB outage shouldn't crash the
+      app — `/health` will surface the issue and the app will recover
+      when the DB returns.
+    """
+    validate_critical_settings()  # raises on critical misconfig
+
     logger.info("Initializing database tables...")
     try:
         await init_db()
         logger.info("Database ready")
     except Exception:
-        # Don't crash the app — DB may come up shortly. /health will
-        # surface the issue.
         logger.exception("init_db failed; continuing without tables")
     yield
 

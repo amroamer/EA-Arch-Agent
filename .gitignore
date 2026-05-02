@@ -1,8 +1,14 @@
 # ── Environment & secrets ─────────────────────────────────────────────
-.env
+# .env IS committed — it holds public-facing defaults. The kpmg-infra
+# deploy mounts it via env_file: /opt/apps/EA-Arch-Agent/.env so the
+# file must exist at the repo root. Real secrets live in either
+# kpmg-infra's env-injection layer (production) or .env.local (dev).
+#
+# The .env.* files below are gitignored — used for personal local
+# overrides and one-off environment-specific tweaks.
 .env.local
-.env.production
 .env.*.local
+.env.production
 *.pem
 *.key
 

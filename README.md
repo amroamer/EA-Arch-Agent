@@ -37,27 +37,79 @@ Browser ─▶ Nginx (prod, 443) ─▶ /EAArchAgent/         ─▶ Frontend (V
 | Proxy    | Nginx (production)                      |
 | Runtime  | Docker Compose                          |
 
-## Quick start (local dev)
+## Local development
 
 Prerequisites: Docker Desktop with NVIDIA Container Toolkit, NVIDIA GPU
-with ≥16 GB VRAM (RTX 4090 / 5090 / A6000 / etc.).
+with ≥8 GB VRAM (qwen2.5vl:7b is ~7 GB; gemma4:26b needs ~16 GB).
+
+**Environment**
+
+`.env` is committed and contains the application defaults — you do **not**
+need to copy it from `.env.example`. For personal overrides (e.g. a different
+`OLLAMA_MODEL`, looser `CORS_ORIGINS`, or local API keys), create
+`.env.local` at the repo root:
 
 ```bash
-# 1. Configure environment
-cp .env.example .env
+# .env.local (optional, gitignored)
+OLLAMA_MODEL=gemma4:latest
+CORS_ORIGINS=http://localhost:5173,http://localhost
+LOG_LEVEL=DEBUG
+```
 
-# 2. Bring up Ollama and pull the model (first run only — ~9.6 GB download)
+`.env.local` is loaded automatically by both Pydantic Settings and
+docker-compose (compose v2 `required: false`). Anything you set there
+overrides `.env`.
+
+**Bring up the stack**
+
+```bash
+# First run only — pull the LLM (~7 GB download).
 docker compose up ollama ollama-pull -d
 docker compose logs -f ollama-pull   # wait until "model already present"
 
-# 3. Phase-1 smoke test — verify multimodal inference works
-pip install httpx
-python backend/smoke_ollama.py path/to/any-architecture.png
-
-# (Phase 2+) bring up the full stack
+# Full stack.
 docker compose up -d
 # Open http://localhost:5173/EAArchAgent/
 ```
+
+**Vars the backend reads** (see `.env.example` for full descriptions):
+`DATABASE_URL`, `OLLAMA_HOST`, `OLLAMA_MODEL`, `OLLAMA_KEEP_ALIVE`,
+`BASE_PATH`, `CORS_ORIGINS`, `MAX_UPLOAD_BYTES`, `IMAGE_RESIZE_MAX_EDGE`,
+`LOG_LEVEL`. The first two are auto-set by `docker-compose.yml` for local
+dev; the rest come from `.env`.
+
+## Production deployment
+
+Deployed via the **kpmg-infra** repo, which orchestrates this app alongside
+Slide-Generator and AI-Badges on a shared Azure VM. The infra repo's
+deploy workflow:
+
+1. SSHes to the VM, runs `git pull` in `/opt/apps/EA-Arch-Agent`.
+2. Mounts the repo's `.env` via `env_file: /opt/apps/EA-Arch-Agent/.env`.
+3. **Injects `DATABASE_URL` and `OLLAMA_HOST` as process env** — these
+   point at shared services (a single Postgres and a single shared
+   Ollama daemon serving all apps on the network).
+4. `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`.
+
+What this means for env vars:
+
+| Var | Source in production | Source in local dev |
+|---|---|---|
+| `DATABASE_URL` | injected by kpmg-infra | computed from `POSTGRES_*` in `docker-compose.yml` |
+| `OLLAMA_HOST` | injected by kpmg-infra | hard-coded to `http://ollama:11434` in `docker-compose.yml` |
+| `OLLAMA_MODEL`, `BASE_PATH`, `CORS_ORIGINS`, `LOG_LEVEL`, etc. | committed `.env` | committed `.env` (overridable via `.env.local`) |
+| Postgres credentials | managed by kpmg-infra | `POSTGRES_*` in committed `.env` (dev-only, not real secrets) |
+
+The backend's startup validator (`validate_critical_settings()` in
+`backend/app/config.py`) runs in the FastAPI lifespan and **fails fast**
+if `DATABASE_URL` or `OLLAMA_HOST` are unset / placeholder strings —
+surfaces orchestrator misconfiguration in the container logs the
+moment it starts. Non-critical placeholders log a warning but don't
+crash the container.
+
+CI: pushing to `main` triggers `.github/workflows/deploy.yml`, a 16-line
+workflow that dispatches the kpmg-infra deploy job. Operator notes for
+manual hotfixes live in [CLAUDE.md](CLAUDE.md).
 
 ## Project structure
 
