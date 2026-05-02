@@ -1,7 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
-
 // Mounted under /EAArchAgent/ so it can co-exist with other KPMG apps
 // behind a shared nginx (matches Slide-Generator's /slide-generator/ and
 // Data-Steward-Assistant's /dataowner/ pattern).
@@ -27,5 +26,11 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+  },
+  preview: {
+    host: "0.0.0.0",
+    port: 5173,
+    strictPort: true,
+    allowedHosts: ["digital-foundation.uksouth.cloudapp.azure.com"],
   },
 });
