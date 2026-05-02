@@ -41,6 +41,7 @@ from app.prompts import (
     build_persona_prompt,
     build_user_driven_prompt,
 )
+from app.prompts.analyze_compliance import build_per_criterion_prompt
 from app.prompts.analyze_detailed import build_detailed_prompt
 from app.prompts.analyze_quick import build_quick_prompt
 from app.prompts.store import fetch_template
@@ -909,6 +910,8 @@ async def _score_one_criterion(
     document_text: str,
     image_b64: str | None,
     active_llm: ActiveLLMConfig,
+    why_it_matters: str | None = None,
+    what_pass_looks_like: str | None = None,
 ) -> dict:
     """Make ONE Ollama call for ONE criterion. Returns the verdict dict
     {compliance_pct, evidence, remarks} after evidence-enforcement.
@@ -921,11 +924,14 @@ async def _score_one_criterion(
          framework run can continue (the row gets compliance_pct=null +
          a remarks note).
     """
-    system_prompt = template.format(
+    system_prompt = build_per_criterion_prompt(
+        template=template,
         framework_name=framework_name,
         criterion_id=criterion_id,
         criterion_text=criterion_text,
-        document_text=document_text or "(no document text provided)",
+        document_text=document_text,
+        why_it_matters=why_it_matters,
+        what_pass_looks_like=what_pass_looks_like,
     )
     user_msg = "Score this criterion. Output ONLY the JSON object."
     images = [image_b64] if image_b64 else []
@@ -1074,8 +1080,10 @@ async def _run_compliance_per_criterion(
     await db.refresh(sess)
     session_id = sess.id
 
-    # Resolve both templates ONCE per request.
-    per_criterion_template = await fetch_template(db, "compliance_per_criterion_v1")
+    # Resolve both templates ONCE per request. v2 is the current default
+    # for per-criterion (adds why_it_matters / what_pass_looks_like under
+    # the criterion); v1 stays registered for users with saved overrides.
+    per_criterion_template = await fetch_template(db, "compliance_per_criterion_v2")
     synthesis_template = await fetch_template(db, "compliance_synthesis_v1")
 
     # Active LLM config (model + sampling). Passed into _score_one_criterion
@@ -1132,6 +1140,8 @@ async def _run_compliance_per_criterion(
                             "criteria": src.criteria,
                             "criterion_text": _strip_criterion_id_prefix(src.criteria),
                             "weight_planned": float(src.weight_planned or 0),
+                            "why_it_matters": src.why_it_matters,
+                            "what_pass_looks_like": src.what_pass_looks_like,
                         }
                     )
 
@@ -1176,6 +1186,8 @@ async def _run_compliance_per_criterion(
                         document_text=doc_for_prompt,
                         image_b64=processed.b64 if processed else None,
                         active_llm=active_llm,
+                        why_it_matters=p["why_it_matters"],
+                        what_pass_looks_like=p["what_pass_looks_like"],
                     )
 
                     yield _sse_event(

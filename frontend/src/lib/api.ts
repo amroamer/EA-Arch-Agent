@@ -202,6 +202,12 @@ export interface FrameworkItem {
   criteria: string;
   weight_planned: number;
   sort_order: number;
+  /** One short sentence (≤200 chars) on the risk this criterion guards
+   *  against. Surfaced verbatim in the per-criterion compliance prompt. */
+  why_it_matters?: string | null;
+  /** One short sentence (≤200 chars) on the concrete artefact / control
+   *  that constitutes a pass. Surfaced verbatim in the per-criterion prompt. */
+  what_pass_looks_like?: string | null;
 }
 
 export interface FrameworkSummary {

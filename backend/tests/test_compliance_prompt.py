@@ -9,15 +9,27 @@ from __future__ import annotations
 
 import pytest
 
-from app.prompts.analyze_compliance import build_compliance_prompt
+from app.prompts.analyze_compliance import (
+    build_compliance_prompt,
+    build_per_criterion_prompt,
+)
 from app.prompts.defaults import (
     ANALYZE_COMPLIANCE_DEFAULT,
     COMPLIANCE_DEFAULT_VERSION,
+    COMPLIANCE_PER_CRITERION_V2_DEFAULT,
     DEFAULTS,
 )
 from app.routes.prompts import _placeholders_in, _validate_template
 
 REQUIRED = {"framework_name", "criteria_block", "max_idx"}
+PER_CRITERION_V2_REQUIRED = {
+    "framework_name",
+    "criterion_id",
+    "criterion_text",
+    "document_text",
+    "why_it_matters",
+    "what_pass_looks_like",
+}
 
 
 # ── Default-template integrity ─────────────────────────────────────────
@@ -175,3 +187,198 @@ def test_validate_accepts_override_with_all_three_placeholders():
 def test_validate_rejects_unknown_key():
     with pytest.raises(Exception):
         _validate_template("not_a_real_prompt", "some template")
+
+
+# ── Per-criterion v2 — rationale block ────────────────────────────────
+
+
+def test_per_criterion_v2_default_contains_required_placeholders():
+    """Catch a regression where someone removes a placeholder from the v2
+    template — the runtime .format() call would KeyError at request time."""
+    placeholders = _placeholders_in(COMPLIANCE_PER_CRITERION_V2_DEFAULT)
+    missing = PER_CRITERION_V2_REQUIRED - placeholders
+    assert not missing, (
+        f"v2 per-criterion default is missing required placeholders: {missing}."
+    )
+
+
+def test_per_criterion_v2_catalogue_placeholders_match_default():
+    spec = DEFAULTS["compliance_per_criterion_v2"]
+    assert set(spec["placeholders"]) == PER_CRITERION_V2_REQUIRED
+
+
+def test_per_criterion_v1_still_registered():
+    """v1 stays registered so user-saved overrides on the old key keep
+    resolving instead of 404-ing the analyze run."""
+    assert "compliance_per_criterion_v1" in DEFAULTS
+
+
+def test_per_criterion_renders_both_rationale_lines_when_present():
+    rendered = build_per_criterion_prompt(
+        framework_name="AI Compliance Check",
+        criterion_id="Q1-S-AI-1.1",
+        criterion_text="Is an EIA completed before deployment?",
+        document_text="(no document)",
+        why_it_matters="Without an EIA, biases surface in production.",
+        what_pass_looks_like="A signed Ethical Impact Assessment per SDAIA.",
+    )
+    assert "Why this matters: Without an EIA, biases surface in production." in rendered
+    assert (
+        "What a pass looks like: A signed Ethical Impact Assessment per SDAIA."
+        in rendered
+    )
+    # Header order: rationale lines come AFTER `Criterion:` and BEFORE
+    # `Architecture description`.
+    why_idx = rendered.index("Why this matters:")
+    pass_idx = rendered.index("What a pass looks like:")
+    arch_idx = rendered.index("Architecture description")
+    crit_idx = rendered.index("Criterion: Is an EIA completed")
+    assert crit_idx < why_idx < pass_idx < arch_idx
+
+
+def test_per_criterion_omits_label_when_only_why_present():
+    rendered = build_per_criterion_prompt(
+        framework_name="X",
+        criterion_id="Q1",
+        criterion_text="text",
+        document_text="(no document)",
+        why_it_matters="risk only",
+        what_pass_looks_like=None,
+    )
+    assert "Why this matters: risk only" in rendered
+    # The label-only line must not survive — no orphan "What a pass looks like:".
+    assert "What a pass looks like:" not in rendered
+
+
+def test_per_criterion_omits_label_when_only_pass_present():
+    rendered = build_per_criterion_prompt(
+        framework_name="X",
+        criterion_id="Q1",
+        criterion_text="text",
+        document_text="(no document)",
+        why_it_matters=None,
+        what_pass_looks_like="pass only",
+    )
+    assert "What a pass looks like: pass only" in rendered
+    assert "Why this matters:" not in rendered
+
+
+def test_per_criterion_omits_both_when_both_null():
+    rendered = build_per_criterion_prompt(
+        framework_name="X",
+        criterion_id="Q1",
+        criterion_text="just the criterion",
+        document_text="(no document)",
+        why_it_matters=None,
+        what_pass_looks_like=None,
+    )
+    # Neither label survives; no orphan "null" or empty-content line.
+    assert "Why this matters:" not in rendered
+    assert "What a pass looks like:" not in rendered
+    assert "null" not in rendered.split("Architecture description", 1)[0]
+
+
+def test_per_criterion_treats_whitespace_only_as_empty():
+    """A whitespace-only rationale value should be stripped to empty and
+    its label-only line removed — guards against UI bugs that save '   '."""
+    rendered = build_per_criterion_prompt(
+        framework_name="X",
+        criterion_id="Q1",
+        criterion_text="text",
+        document_text="(no document)",
+        why_it_matters="   \t  ",
+        what_pass_looks_like="pass present",
+    )
+    assert "Why this matters:" not in rendered
+    assert "What a pass looks like: pass present" in rendered
+
+
+def test_per_criterion_handles_curly_braces_in_rationale():
+    """Curly braces in the substituted VALUE must not be re-interpreted by
+    str.format. Guard against a regression where someone reaches for a
+    second .format() pass on the rendered text."""
+    rendered = build_per_criterion_prompt(
+        framework_name="X",
+        criterion_id="Q1",
+        criterion_text="text",
+        document_text="(no document)",
+        why_it_matters="contains {placeholder} and {another}",
+        what_pass_looks_like="JSON like {\"a\": 1}",
+    )
+    assert "{placeholder}" in rendered
+    assert "{another}" in rendered
+    assert '{"a": 1}' in rendered
+
+
+def test_per_criterion_handles_quotes_and_apostrophes():
+    rendered = build_per_criterion_prompt(
+        framework_name='Framework "X"',
+        criterion_id="Q1",
+        criterion_text="It's a question",
+        document_text="(no document)",
+        why_it_matters="vendor's lock-in is a problem",
+        what_pass_looks_like='An "exit plan" document',
+    )
+    assert 'Framework: "Framework "X""' in rendered
+    assert "vendor's lock-in" in rendered
+    assert '"exit plan"' in rendered
+
+
+def test_per_criterion_uses_explicit_template_when_provided():
+    """Mirrors the override path: when the orchestrator passes a saved
+    user template, the builder uses that, not the module's default."""
+    custom = (
+        "OVERRIDE\n"
+        "fw={framework_name}\n"
+        "cid={criterion_id}\n"
+        "ctxt={criterion_text}\n"
+        "doc={document_text}\n"
+        "Why this matters: {why_it_matters}\n"
+        "What a pass looks like: {what_pass_looks_like}\n"
+        "END\n"
+    )
+    rendered = build_per_criterion_prompt(
+        framework_name="X",
+        criterion_id="Q1",
+        criterion_text="text",
+        document_text="doc",
+        why_it_matters="risk",
+        what_pass_looks_like="pass",
+        template=custom,
+    )
+    assert rendered.startswith("OVERRIDE")
+    assert "Why this matters: risk" in rendered
+    assert "What a pass looks like: pass" in rendered
+
+
+def test_per_criterion_q1_s_ai_1_1_full_render_snapshot():
+    """Snapshot test: render the full v2 prompt for a real AI criterion
+    using the seeded rationale text and assert key substrings. Captured
+    in the PR description as the load-bearing evidence that the prompt
+    actually carries the rationale through to Ollama."""
+    rendered = build_per_criterion_prompt(
+        framework_name="Artificial Intelligence (AI) Compliance Check",
+        criterion_id="Q1-S-AI-1.1",
+        criterion_text=(
+            "Is an ethical impact assessment completed and formally approved "
+            "before deployment or any material change?"
+        ),
+        document_text="(no document text provided)",
+        why_it_matters=(
+            "Without an EIA, biases, fairness gaps, and rights-affecting harms "
+            "surface in production where remediation is expensive and may breach "
+            "SDAIA AI ethics obligations."
+        ),
+        what_pass_looks_like=(
+            "A signed Ethical Impact Assessment per SDAIA AI Ethics Principles, "
+            "dated before go-live, with approval signature from the AI governance "
+            "committee or accountable authority."
+        ),
+    )
+    assert 'Framework: "Artificial Intelligence (AI) Compliance Check"' in rendered
+    assert "Criterion ID: Q1-S-AI-1.1" in rendered
+    assert "Why this matters: Without an EIA" in rendered
+    assert "What a pass looks like: A signed Ethical Impact Assessment" in rendered
+    # Hard rules and JSON-output discipline preserved from v1.
+    assert "EVIDENCE RULE (mandatory)" in rendered
+    assert "Output ONLY the JSON object." in rendered

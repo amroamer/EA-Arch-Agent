@@ -136,6 +136,14 @@ class FrameworkItem(Base):
 
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # Rationale fields surfaced to the model in the per-criterion prompt
+    # (see compliance_per_criterion_v2 in app/prompts/defaults.py). Both
+    # nullable: criteria created via the Settings UI before this column
+    # existed — or new ones the consultant hasn't filled in yet — render
+    # cleanly because the prompt builder skips empty lines.
+    why_it_matters: Mapped[str | None] = mapped_column(Text, nullable=True)
+    what_pass_looks_like: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     framework: Mapped["Framework"] = relationship(back_populates="items")
 
 

@@ -159,12 +159,66 @@ Every criterion from 0 to {max_idx} must appear exactly once in the SCORECARD ar
 """
 
 
-COMPLIANCE_PER_CRITERION_DEFAULT = """\
+COMPLIANCE_PER_CRITERION_V1_DEFAULT = """\
 You are an Enterprise-Architecture compliance auditor. You will score an architecture against ONE compliance criterion. The architecture is described by the document text below and (optionally) by an attached diagram image.
 
 Framework: "{framework_name}"
 Criterion ID: {criterion_id}
 Criterion: {criterion_text}
+
+Architecture description (Markdown — headings, tables, and ADR codes preserved in document order):
+---
+{document_text}
+---
+
+Return EXACTLY one JSON object — no preamble, no code fences, no commentary:
+
+{{
+  "compliance_pct": <one of 100, 50, 0, or null>,
+  "evidence": "<a concrete citation, or 'none'>",
+  "remarks": "<1–3 sentences explaining the verdict>"
+}}
+
+SCORING RUBRIC:
+  100  Compliant — there is EXPLICIT evidence in the document or diagram. At
+       least one of: a relevant ADR (ADR-NNN), a named section heading
+       (e.g. §9.3), a labelled table, a referenced standard (e.g. NCGR-EA-CAT-32),
+       or a clear element in the diagram. Be generous: if a single ADR or
+       section answers the criterion, score 100 — do NOT downgrade to 50
+       just because one sub-aspect is unelaborated.
+   50  Partial — the topic is touched but key elements are missing, unclear,
+       or only mentioned in passing without a concrete reference.
+    0  Not Compliant — the architecture EXPLICITLY contradicts the criterion
+       (e.g. proposes a banned vendor, violates a referenced standard).
+ null  Not Applicable — the criterion does not apply at all to this kind of
+       architecture. Use SPARINGLY; if the topic is discussed at all, prefer
+       0/50/100.
+
+EVIDENCE RULE (mandatory):
+- For compliance_pct = 100, "evidence" MUST be a concrete citation —
+  examples: "ADR-021", "§9.3 Compute platform", "Table 5", "NCGR-EA-CAT-32".
+  Do NOT use "none" or empty string with a 100 score.
+- For 50 / 0 / null, "evidence" may be "none" if you genuinely couldn't
+  cite anything; otherwise cite what you found.
+
+Output ONLY the JSON object.\
+"""
+
+
+# v2 — adds the per-criterion rationale block ({why_it_matters} +
+# {what_pass_looks_like}) directly under the criterion text. The builder
+# at app/prompts/analyze_compliance.py:build_per_criterion_prompt strips
+# any rationale line whose value is null/empty so legacy criteria without
+# rationale still render cleanly. Same evidence rule and JSON-only output
+# as v1 — only the prompt body changes.
+COMPLIANCE_PER_CRITERION_V2_DEFAULT = """\
+You are an Enterprise-Architecture compliance auditor. You will score an architecture against ONE compliance criterion. The architecture is described by the document text below and (optionally) by an attached diagram image.
+
+Framework: "{framework_name}"
+Criterion ID: {criterion_id}
+Criterion: {criterion_text}
+Why this matters: {why_it_matters}
+What a pass looks like: {what_pass_looks_like}
 
 Architecture description (Markdown — headings, tables, and ADR codes preserved in document order):
 ---
@@ -316,15 +370,12 @@ DEFAULTS: dict[str, dict] = {
         "template": ANALYZE_COMPLIANCE_DEFAULT,
     },
     "compliance_per_criterion_v1": {
-        "name": "Compliance per-criterion scoring",
+        "name": "Compliance per-criterion scoring (v1, legacy)",
         "description": (
-            "Per-criterion compliance — ONE Ollama call PER criterion. "
-            "Returns a JSON verdict {compliance_pct, evidence, remarks}. "
-            "Used when scoring_mode=per_criterion. {framework_name} is the "
-            "framework, {criterion_id} is the stable ID like Q5-S-INF-1.3, "
-            "{criterion_text} is the question text, {document_text} is the "
-            "structured architecture description (capped at 30 KB). The "
-            "image — when present — is passed as a separate Ollama input."
+            "Legacy per-criterion template kept registered so user-saved "
+            "overrides on this key still resolve. New requests use v2 — "
+            "see compliance_per_criterion_v2. Same inputs as v2 minus the "
+            "two rationale placeholders."
         ),
         "placeholders": [
             "framework_name",
@@ -332,7 +383,33 @@ DEFAULTS: dict[str, dict] = {
             "criterion_text",
             "document_text",
         ],
-        "template": COMPLIANCE_PER_CRITERION_DEFAULT,
+        "template": COMPLIANCE_PER_CRITERION_V1_DEFAULT,
+    },
+    "compliance_per_criterion_v2": {
+        "name": "Compliance per-criterion scoring",
+        "description": (
+            "Per-criterion compliance — ONE Ollama call PER criterion. "
+            "Returns a JSON verdict {compliance_pct, evidence, remarks}. "
+            "Used when scoring_mode=per_criterion. Surfaces the "
+            "per-criterion rationale ({why_it_matters}, "
+            "{what_pass_looks_like}) so the model scores against intent, "
+            "not just the criterion text. The builder strips empty "
+            "rationale lines so criteria without rationale render cleanly. "
+            "{framework_name} is the framework, {criterion_id} is the stable "
+            "ID like Q5-S-INF-1.3, {criterion_text} is the question text, "
+            "{document_text} is the structured architecture description "
+            "(capped at 30 KB). The image — when present — is passed as a "
+            "separate Ollama input."
+        ),
+        "placeholders": [
+            "framework_name",
+            "criterion_id",
+            "criterion_text",
+            "document_text",
+            "why_it_matters",
+            "what_pass_looks_like",
+        ],
+        "template": COMPLIANCE_PER_CRITERION_V2_DEFAULT,
     },
     "compliance_synthesis_v1": {
         "name": "Compliance synthesis (narrative)",

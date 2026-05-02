@@ -12,6 +12,11 @@ class FrameworkItemBase(BaseModel):
     criteria: str = Field(..., min_length=1, max_length=4000)
     weight_planned: float = Field(0.0, ge=0, le=100)
     sort_order: int = 0
+    # Rationale surfaced to the model in the per-criterion prompt. One
+    # short sentence each; the 200-char cap matches the seed-data style
+    # and keeps the prompt block from drowning the criterion text.
+    why_it_matters: str | None = Field(None, max_length=200)
+    what_pass_looks_like: str | None = Field(None, max_length=200)
 
 
 class FrameworkItemRead(FrameworkItemBase):

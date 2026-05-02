@@ -51,6 +51,8 @@ def _replace_items(
             criteria=it.criteria,
             weight_planned=it.weight_planned,
             sort_order=idx if it.sort_order == 0 else it.sort_order,
+            why_it_matters=it.why_it_matters,
+            what_pass_looks_like=it.what_pass_looks_like,
         )
         for idx, it in enumerate(items)
     ]
@@ -195,6 +197,8 @@ def _build_workbook(frameworks: list[Framework]) -> bytes:
         ("#", 5),
         ("Criteria", 80),
         ("Weight (%)", 14),
+        ("Why this matters", 60),
+        ("What a pass looks like", 60),
     ]
 
     for fw in frameworks:
@@ -228,6 +232,8 @@ def _build_workbook(frameworks: list[Framework]) -> bytes:
             ws.cell(row=r, column=1, value=i).alignment = num_align
             ws.cell(row=r, column=2, value=it.criteria).alignment = body_align
             ws.cell(row=r, column=3, value=wp).alignment = num_align
+            ws.cell(row=r, column=4, value=it.why_it_matters or "").alignment = body_align
+            ws.cell(row=r, column=5, value=it.what_pass_looks_like or "").alignment = body_align
             for col in range(1, len(columns) + 1):
                 ws.cell(row=r, column=col).border = border
 

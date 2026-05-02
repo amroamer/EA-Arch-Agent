@@ -20,6 +20,8 @@ import {
   ListChecks,
   Target,
   Download,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import {
   Card,
@@ -52,7 +54,16 @@ function emptyItem(sort_order: number): FrameworkItem {
     criteria: "",
     weight_planned: 0,
     sort_order,
+    why_it_matters: null,
+    what_pass_looks_like: null,
   };
+}
+
+function hasRationale(it: FrameworkItem): boolean {
+  return Boolean(
+    (it.why_it_matters && it.why_it_matters.trim()) ||
+      (it.what_pass_looks_like && it.what_pass_looks_like.trim()),
+  );
 }
 
 /** Tone for the total-weight headline relative to the 100% target. */
@@ -104,6 +115,18 @@ export default function FrameworkSettings() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  // Indices of rows whose rationale block is expanded. Collapsed by default
+  // even when fields are populated — the indicator pill makes presence visible.
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+
+  const toggleExpanded = (idx: number) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  };
 
   const refreshList = useCallback(async () => {
     try {
@@ -549,6 +572,74 @@ export default function FrameworkSettings() {
                               placeholder="e.g., All public-facing endpoints terminate TLS at the ALB"
                               className="min-h-[56px] resize-y text-sm leading-relaxed"
                             />
+                            <button
+                              type="button"
+                              onClick={() => toggleExpanded(idx)}
+                              className="mt-1.5 inline-flex items-center gap-1 text-xs text-gray-500 hover:text-kpmg-blue"
+                              aria-expanded={expandedRows.has(idx)}
+                              aria-controls={`rationale-${idx}`}
+                            >
+                              {expandedRows.has(idx) ? (
+                                <ChevronDown className="h-3.5 w-3.5" />
+                              ) : (
+                                <ChevronRight className="h-3.5 w-3.5" />
+                              )}
+                              {hasRationale(it) ? "Edit rationale" : "Add rationale"}
+                              {hasRationale(it) && !expandedRows.has(idx) && (
+                                <span
+                                  className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-status-green"
+                                  aria-label="Rationale set"
+                                  title="Rationale set"
+                                />
+                              )}
+                            </button>
+                            {expandedRows.has(idx) && (
+                              <div
+                                id={`rationale-${idx}`}
+                                className="mt-2 space-y-2 rounded-md border border-gray-200 bg-gray-50/60 p-2"
+                              >
+                                <div className="space-y-1">
+                                  <Label
+                                    htmlFor={`why-${idx}`}
+                                    className="text-xs font-medium text-gray-600"
+                                  >
+                                    Why this matters
+                                  </Label>
+                                  <Textarea
+                                    id={`why-${idx}`}
+                                    value={it.why_it_matters ?? ""}
+                                    onChange={(e) =>
+                                      updateItem(idx, {
+                                        why_it_matters: e.target.value || null,
+                                      })
+                                    }
+                                    placeholder="One sentence on the risk this criterion protects against."
+                                    maxLength={200}
+                                    className="min-h-[44px] resize-y text-sm leading-relaxed"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label
+                                    htmlFor={`pass-${idx}`}
+                                    className="text-xs font-medium text-gray-600"
+                                  >
+                                    What a pass looks like
+                                  </Label>
+                                  <Textarea
+                                    id={`pass-${idx}`}
+                                    value={it.what_pass_looks_like ?? ""}
+                                    onChange={(e) =>
+                                      updateItem(idx, {
+                                        what_pass_looks_like: e.target.value || null,
+                                      })
+                                    }
+                                    placeholder="One sentence on the concrete evidence that constitutes a pass."
+                                    maxLength={200}
+                                    className="min-h-[44px] resize-y text-sm leading-relaxed"
+                                  />
+                                </div>
+                              </div>
+                            )}
                           </td>
                           <td className="p-2">
                             <Input
