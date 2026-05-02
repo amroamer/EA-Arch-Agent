@@ -41,7 +41,7 @@ export function Header({
           className="flex items-center gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kpmg-cobalt rounded-md"
         >
           <img
-            src="/arch-assistant/kpmg-logo.svg"
+            src="/EAArchAgent/kpmg-logo.svg"
             alt="KPMG"
             className="h-8 w-auto"
           />

@@ -1,12 +1,12 @@
 /**
  * Typed API helpers for the FastAPI backend.
  *
- * The app is mounted at `/arch-assistant/` and the backend at
- * `/arch-assistant/api/`. In dev, Vite proxies the API path to
+ * The app is mounted at `/EAArchAgent/` and the backend at
+ * `/EAArchAgent/api/`. In dev, Vite proxies the API path to
  * http://localhost:8000; in prod nginx does the same.
  */
 
-const API_BASE = "/arch-assistant/api";
+const API_BASE = "/EAArchAgent/api";
 
 export const apiUrl = (path: string): string =>
   `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;

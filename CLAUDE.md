@@ -230,7 +230,7 @@ docker logs --tail 100 -f arch-assistant-backend
 docker logs --tail 100 -f arch-assistant-frontend
 
 # Health check (from VM)
-curl -s http://localhost/arch-assistant/api/health | jq
+curl -s http://localhost/EAArchAgent/api/health | jq
 
 # Force model reload after pulling a newer Gemma
 ollama pull qwen2.5vl:7b

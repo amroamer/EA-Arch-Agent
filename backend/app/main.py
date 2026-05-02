@@ -1,6 +1,6 @@
 """FastAPI application entrypoint.
 
-The app is mounted under `BASE_PATH` (default `/arch-assistant`) so that
+The app is mounted under `BASE_PATH` (default `/EAArchAgent`) so that
 nginx can route the entire path prefix to this service in production. In
 development, the Vite dev server proxies the API path to the backend
 directly.

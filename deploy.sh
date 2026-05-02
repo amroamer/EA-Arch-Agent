@@ -10,7 +10,7 @@ set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-/opt/arch-assistant}"
 COMPOSE_FILES="-f docker-compose.yml -f docker-compose.prod.yml"
-HEALTH_URL="${HEALTH_URL:-https://arch-assistant.kpmg.example/arch-assistant/api/health}"
+HEALTH_URL="${HEALTH_URL:-https://arch-assistant.kpmg.example/EAArchAgent/api/health}"
 
 cd "$PROJECT_DIR"
 

@@ -20,8 +20,8 @@ comparison output using a fully on-prem multimodal LLM (Gemma 4 via Ollama).
 ## Architecture
 
 ```
-Browser ─▶ Nginx (prod, 443) ─▶ /arch-assistant/         ─▶ Frontend (Vite/static)
-                              ─▶ /arch-assistant/api/*   ─▶ FastAPI (port 8000)
+Browser ─▶ Nginx (prod, 443) ─▶ /EAArchAgent/         ─▶ Frontend (Vite/static)
+                              ─▶ /EAArchAgent/api/*   ─▶ FastAPI (port 8000)
                                                                 ├─▶ Ollama   (11434, GPU)
                                                                 └─▶ Postgres (5432)
 ```
@@ -56,7 +56,7 @@ python backend/smoke_ollama.py path/to/any-architecture.png
 
 # (Phase 2+) bring up the full stack
 docker compose up -d
-# Open http://localhost:5173/arch-assistant/
+# Open http://localhost:5173/EAArchAgent/
 ```
 
 ## Project structure
@@ -141,7 +141,7 @@ Phase 7 — Production deployment (alignment with kpmg-infra pattern) ▶ ✅ do
 ### SSE responses arrive in big bursts instead of token-by-token
 - Most common cause: nginx buffering. Confirm `proxy_buffering off`,
   `proxy_cache off`, `proxy_http_version 1.1`, and `gzip off` on the
-  `/arch-assistant/api/(analyze|compare)` location.
+  `/EAArchAgent/api/(analyze|compare)` location.
 - The backend already sends `X-Accel-Buffering: no` as a fallback.
 - If running behind Cloudflare, disable "Auto Minify" and add an "SSE"
   page rule that turns off proxying.

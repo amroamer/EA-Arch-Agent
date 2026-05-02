@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     )
 
     # ── App routing ────────────────────────────────────────────────────
-    base_path: str = "/arch-assistant"
+    base_path: str = "/EAArchAgent"
 
     # CORS allow-list. Comma-separated in env, parsed to list at runtime.
     cors_origins: str = "http://localhost:5173,http://localhost"

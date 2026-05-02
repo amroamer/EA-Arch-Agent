@@ -1,81 +1,82 @@
-# Production override — extends docker-compose.yml.
-# Usage:  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-#
-# Differences from dev:
-#   - Disables the in-compose Ollama (uses the host's shared daemon
-#     at host.docker.internal:11434, matching slide-generator pattern).
-#   - No source volume mounts (uses built images).
-#   - No host port exposure on backend/db/frontend (only nginx hits 80/443).
-#   - Loads env from .env.production.
-#   - nginx joins kpmg-network for cross-app reachability.
-
 services:
-  # Stub out the in-compose Ollama services. In prod, the backend reaches
-  # the host-level Ollama daemon via host.docker.internal:11434 (see
-  # backend.environment below). These stubs are no-ops that exit
-  # immediately so the base compose's `ollama` / `ollama-pull` definitions
-  # don't try to allocate GPUs or download the model.
-  ollama:
-    image: alpine:3
-    entrypoint: ["sh", "-c", "echo 'prod uses shared host Ollama; stub exits.'"]
-    restart: "no"
-    deploy:
-      resources: {}
-    healthcheck:
-      disable: true
-    ports: []
-  ollama-pull:
-    image: alpine:3
-    entrypoint: ["true"]
-    restart: "no"
-
+  # Postgres — session/history persistence
   db:
-    # In prod, do not expose Postgres on the host.
-    ports: []
-
-  backend:
-    env_file:
-      - .env.production
-    volumes: []  # no source mount in prod
-    ports: []    # internal only; nginx proxies to it
-    extra_hosts:
-      # On Linux, host.docker.internal isn't resolvable by default.
-      # `host-gateway` resolves to the host's docker-bridge gateway.
-      - "host.docker.internal:host-gateway"
+    image: postgres:16-alpine
+    container_name: arch-assistant-db
     environment:
-      OLLAMA_HOST: http://host.docker.internal:11434
+      POSTGRES_USER: ${POSTGRES_USER:-kpmg}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kpmg}
+      POSTGRES_DB: ${POSTGRES_DB:-kpmg_arch}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - arch-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kpmg} -d ${POSTGRES_DB:-kpmg_arch}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Backend — FastAPI
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: arch-assistant-backend
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      OLLAMA_HOST: http://ollama-shared:11434
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-kpmg}:${POSTGRES_PASSWORD:-kpmg}@db:5432/${POSTGRES_DB:-kpmg_arch}
     depends_on:
       db:
         condition: service_healthy
-    # Note: depends_on for `ollama` is intentionally dropped — the host
-    # daemon is provisioned out-of-band (see CLAUDE.md).
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      target: production
-    env_file:
-      - .env.production
-    volumes: []
-    ports: []
-    # Frontend container serves built static assets; nginx proxies to it.
-
-  nginx:
-    image: nginx:1.27-alpine
-    container_name: arch-assistant-nginx
-    ports:
-      - "80:80"
-      - "443:443"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./backend:/app
     networks:
       arch-network:
       kpmg-network:
         aliases:
-          - arch-assistant-nginx
+          - arch-assistant-backend
+    restart: unless-stopped
+
+  # Frontend — Vite dev server (local development only)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: dev
+    container_name: arch-assistant-frontend
+    command: npm run dev
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    env_file:
+      - .env
+    environment:
+      VITE_API_PROXY_TARGET: http://backend:8000
     depends_on:
       - backend
-      - frontend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      arch-network:
+      kpmg-network:
+        aliases:
+          - arch-assistant-frontend
     restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  arch-network:
+    driver: bridge
+  kpmg-network:
+    external: true
+    name: kpmg-infra_kpmg-network
