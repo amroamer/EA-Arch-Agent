@@ -139,6 +139,46 @@ class FrameworkItem(Base):
     framework: Mapped["Framework"] = relationship(back_populates="items")
 
 
+class LLMConfig(Base):
+    """Singleton row holding the user's chosen LLM model + sampling params.
+
+    When this row exists, every Ollama call (analyze / compare / compliance)
+    pulls the model name and generation knobs from here instead of the
+    OLLAMA_MODEL env var or hard-coded defaults. Editable via Settings →
+    LLM Model.
+
+    `id` is fixed to the literal "default" so we always have at most one
+    row — easier than a singleton constraint.
+    """
+
+    __tablename__ = "llm_config"
+
+    id: Mapped[str] = mapped_column(String(16), primary_key=True, default="default")
+
+    # Model tag, e.g. "qwen2.5vl:7b" or "gemma4:latest". Must match a
+    # model present on the configured Ollama daemon (see /llm/models).
+    model: Mapped[str] = mapped_column(String(200), nullable=False)
+
+    # Generation knobs — passed straight through to Ollama's `options`.
+    temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.2)
+    num_ctx: Mapped[int] = mapped_column(Integer, nullable=False, default=16_384)
+    num_predict: Mapped[int] = mapped_column(Integer, nullable=False, default=4096)
+
+    # Optional sampling knobs — null means "let Ollama use its default".
+    top_p: Mapped[float | None] = mapped_column(Float, nullable=True)
+    top_k: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    repeat_penalty: Mapped[float | None] = mapped_column(Float, nullable=True)
+    seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Ollama keep_alive: "-1" pins forever, "30m" unloads after idle, "0"
+    # unloads immediately. Stored as string to match Ollama's accepted forms.
+    keep_alive: Mapped[str] = mapped_column(String(32), nullable=False, default="-1")
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now_utc, onupdate=_now_utc, nullable=False
+    )
+
+
 class PromptOverride(Base):
     """User-saved override for one of the built-in prompt templates.
 

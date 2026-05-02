@@ -22,6 +22,7 @@ from app.routes import (
     frameworks,
     health,
     images,
+    llm,
     mock_stream,
     prompts,
     sessions,
@@ -84,6 +85,7 @@ app.include_router(sessions.router, prefix=api_prefix, tags=["sessions"])
 app.include_router(images.router, prefix=api_prefix, tags=["images"])
 app.include_router(frameworks.router, prefix=api_prefix, tags=["frameworks"])
 app.include_router(prompts.router, prefix=api_prefix, tags=["prompts"])
+app.include_router(llm.router, prefix=api_prefix, tags=["llm"])
 app.include_router(mock_stream.router, prefix=api_prefix, tags=["dev"])
 
 

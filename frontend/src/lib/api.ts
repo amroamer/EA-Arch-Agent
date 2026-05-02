@@ -331,3 +331,73 @@ export async function getPromptOverrideStatus(
   if (!r.ok) throw new Error(`GET /prompts/${key}/override-status returned ${r.status}`);
   return r.json();
 }
+
+// ── LLM Model + sampling-parameter management (Settings → LLM Model) ──
+
+/** One row of the Ollama `/api/tags` catalogue. */
+export interface LLMModel {
+  name: string;
+  size_bytes: number;
+  modified_at: string | null;
+  parameter_size: string | null;
+  quantization: string | null;
+  family: string | null;
+}
+
+/** Saved LLM config — what every analyze/compare/compliance call uses. */
+export interface LLMConfigData {
+  model: string;
+  temperature: number;
+  num_ctx: number;
+  num_predict: number;
+  top_p: number | null;
+  top_k: number | null;
+  repeat_penalty: number | null;
+  seed: number | null;
+  /** Ollama keep_alive — "-1" pins the model, "30m" unloads on idle, "0"
+   *  unloads immediately. Stored as a string for parity with Ollama. */
+  keep_alive: string;
+  /** True iff a row exists in `llm_config`; false = falling back to env defaults. */
+  is_overridden: boolean;
+  updated_at: string | null;
+}
+
+/** PUT /llm/config body — same shape minus the server-managed flags. */
+export interface LLMConfigBody {
+  model: string;
+  temperature: number;
+  num_ctx: number;
+  num_predict: number;
+  top_p: number | null;
+  top_k: number | null;
+  repeat_penalty: number | null;
+  seed: number | null;
+  keep_alive: string;
+}
+
+export async function listLLMModels(): Promise<LLMModel[]> {
+  const r = await fetch(apiUrl("/llm/models"));
+  if (!r.ok) throw new Error(`/llm/models returned ${r.status}`);
+  return r.json();
+}
+
+export async function getLLMConfig(): Promise<LLMConfigData> {
+  const r = await fetch(apiUrl("/llm/config"));
+  if (!r.ok) throw new Error(`/llm/config returned ${r.status}`);
+  return r.json();
+}
+
+export async function saveLLMConfig(
+  body: LLMConfigBody,
+): Promise<LLMConfigData> {
+  const r = await fetch(apiUrl("/llm/config"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const detail = await r.text().catch(() => "");
+    throw new Error(`PUT /llm/config returned ${r.status}: ${detail.slice(0, 300)}`);
+  }
+  return r.json();
+}

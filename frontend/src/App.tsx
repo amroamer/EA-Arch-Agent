@@ -8,6 +8,7 @@ import SessionDetail from "@/pages/SessionDetail";
 import SettingsLayout from "@/pages/SettingsLayout";
 import FrameworkSettings from "@/pages/FrameworkSettings";
 import PromptsSettings from "@/pages/PromptsSettings";
+import LLMSettings from "@/pages/LLMSettings";
 import { COMPARE_ENABLED } from "@/lib/features";
 
 export default function App() {
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="frameworks" element={<FrameworkSettings />} />
           <Route path="frameworks/:id" element={<FrameworkSettings />} />
           <Route path="prompts" element={<PromptsSettings />} />
+          <Route path="llm" element={<LLMSettings />} />
         </Route>
         <Route
           path="*"

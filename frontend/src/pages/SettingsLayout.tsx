@@ -4,12 +4,13 @@
  *   /settings              → redirects to /settings/frameworks
  *   /settings/frameworks   → EA Compliance Framework editor
  *   /settings/prompts      → Prompts editor
+ *   /settings/llm          → LLM model + sampling-parameter editor
  *
  * The sidebar's "Settings" entry routes to /settings; this layout renders
  * the tabs and an <Outlet> for the active sub-page.
  */
 import { NavLink, Outlet } from "react-router-dom";
-import { ListChecks, Sparkles } from "lucide-react";
+import { ListChecks, Sparkles, Cpu } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const TABS = [
@@ -22,6 +23,11 @@ const TABS = [
     to: "/settings/prompts",
     label: "Prompts",
     icon: Sparkles,
+  },
+  {
+    to: "/settings/llm",
+    label: "LLM Model",
+    icon: Cpu,
   },
 ];
 

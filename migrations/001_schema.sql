@@ -69,6 +69,28 @@ CREATE TABLE IF NOT EXISTS public.images (
 
 
 --
+-- Name: llm_config; Type: TABLE; Schema: public; Owner: -
+--
+-- Singleton row (id='default') holding the user's chosen LLM model + the
+-- generation knobs each Ollama call uses. Editable via Settings → LLM Model.
+--
+
+CREATE TABLE IF NOT EXISTS public.llm_config (
+    id character varying(16) DEFAULT 'default'::character varying NOT NULL,
+    model character varying(200) NOT NULL,
+    temperature double precision DEFAULT 0.2 NOT NULL,
+    num_ctx integer DEFAULT 16384 NOT NULL,
+    num_predict integer DEFAULT 4096 NOT NULL,
+    top_p double precision,
+    top_k integer,
+    repeat_penalty double precision,
+    seed integer,
+    keep_alive character varying(32) DEFAULT '-1'::character varying NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: prompt_overrides; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -135,6 +157,18 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'images_pkey') THEN
     ALTER TABLE ONLY public.images
     ADD CONSTRAINT images_pkey PRIMARY KEY (sha256);
+  END IF;
+END $$;
+
+
+--
+-- Name: llm_config llm_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'llm_config_pkey') THEN
+    ALTER TABLE ONLY public.llm_config
+    ADD CONSTRAINT llm_config_pkey PRIMARY KEY (id);
   END IF;
 END $$;
 

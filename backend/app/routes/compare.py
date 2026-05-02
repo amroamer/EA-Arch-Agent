@@ -25,6 +25,7 @@ from app.models.requests import SessionStatus, SessionType
 from app.ollama_client import stream_chat
 from app.prompts import build_compare_prompt
 from app.services.image_store import upsert_image
+from app.services.llm_config import fetch_active_llm_config
 from app.utils.image_utils import ImageValidationError, validate_and_resize
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,9 @@ async def compare(
     await db.refresh(sess)
     session_id = sess.id
 
+    # Resolve the user's saved LLM config (Settings → LLM Model).
+    active_llm = await fetch_active_llm_config(db)
+
     async def event_generator() -> AsyncIterator[bytes]:
         yield _sse_event({"type": "session_created", "id": session_id})
 
@@ -89,6 +93,7 @@ async def compare(
                 system_prompt=system_prompt,
                 user_prompt="Produce the comparison and roadmap as instructed.",
                 images_b64=[cur.b64, ref.b64],
+                **active_llm.to_chat_kwargs(),
             ):
                 if evt["type"] == "token":
                     collected.append(evt["content"])

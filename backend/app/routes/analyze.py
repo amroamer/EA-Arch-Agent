@@ -45,6 +45,7 @@ from app.prompts.analyze_detailed import build_detailed_prompt
 from app.prompts.analyze_quick import build_quick_prompt
 from app.prompts.store import fetch_template
 from app.services.image_store import upsert_image
+from app.services.llm_config import ActiveLLMConfig, fetch_active_llm_config
 from app.utils.compliance_parser import (
     ComplianceStreamParser,
     compute_weighted_score,
@@ -289,6 +290,10 @@ async def analyze(
     )
     user_msg = _augment_user_msg(user_msg, doc_text)
 
+    # Resolve the user's saved LLM config (model + sampling knobs). Falls
+    # back to settings/env defaults when no row in `llm_config`.
+    active_llm = await fetch_active_llm_config(db)
+
     # Persist the image (idempotent on hash) and a session row up-front so
     # the History sidebar can show it even while the stream is still
     # running. For text-only docx (no embedded image), processed is None
@@ -336,12 +341,18 @@ async def analyze(
         client_disconnected = False
         completed_normally = False
 
+        # Build kwargs from the user's saved config but bump num_ctx if
+        # we're carrying doc text and the user's saved value would be too
+        # tight (auto-pick still wins for the bigger context).
+        chat_kwargs = active_llm.to_chat_kwargs()
+        chat_kwargs["num_ctx"] = max(chat_kwargs["num_ctx"], _ctx_for(doc_text))
+
         try:
             async for evt in stream_chat(
                 system_prompt=system_prompt,
                 user_prompt=user_msg,
                 images_b64=[processed.b64] if processed else [],
-                num_ctx=_ctx_for(doc_text),
+                **chat_kwargs,
             ):
                 if evt["type"] == "token":
                     collected.append(evt["content"])
@@ -477,6 +488,9 @@ async def _run_compliance(
     # framework-specific bits are injected via .format() in the builder.
     compliance_template = await fetch_template(db, "analyze_compliance")
 
+    # Active LLM config (Settings → LLM Model). Resolved once per request.
+    active_llm = await fetch_active_llm_config(db)
+
     logger.info(
         "compliance_started",
         extra={
@@ -486,6 +500,7 @@ async def _run_compliance(
             "image_bytes_resized": len(processed.resized_bytes) if processed else 0,
             "doc_text_chars": len(doc_text) if doc_text else 0,
             "doc_truncated": bool(doc_text and len(doc_text) > _DOC_TEXT_CHAR_CAP),
+            "model": active_llm.model,
         },
     )
 
@@ -567,9 +582,7 @@ async def _run_compliance(
                     system_prompt=system_prompt,
                     user_prompt=user_msg,
                     images_b64=[processed.b64] if processed else [],
-                    temperature=0.2,
-                    num_ctx=16_384,
-                    num_predict=8000,
+                    **active_llm.to_chat_kwargs(),
                 ):
                     et = evt["type"]
                     if et == "token":
@@ -645,13 +658,18 @@ async def _run_compliance(
                         async def _retry_caller(retry_prompt: str) -> list[dict]:
                             recovered: list[dict] = []
                             r_parser = ComplianceStreamParser()
+                            # Retry uses the same model + sampling, but force
+                            # temperature down for determinism on the
+                            # second attempt (regardless of user setting).
+                            retry_kwargs = active_llm.to_chat_kwargs()
+                            retry_kwargs["temperature"] = min(
+                                retry_kwargs["temperature"], 0.1
+                            )
                             async for revt in stream_chat(
                                 system_prompt=system_prompt,
                                 user_prompt=retry_prompt,
                                 images_b64=[processed.b64] if processed else [],
-                                temperature=0.1,
-                                num_ctx=16_384,
-                                num_predict=4000,
+                                **retry_kwargs,
                             ):
                                 rt = revt["type"]
                                 if rt == "token":
@@ -890,6 +908,7 @@ async def _score_one_criterion(
     criterion_text: str,
     document_text: str,
     image_b64: str | None,
+    active_llm: ActiveLLMConfig,
 ) -> dict:
     """Make ONE Ollama call for ONE criterion. Returns the verdict dict
     {compliance_pct, evidence, remarks} after evidence-enforcement.
@@ -911,16 +930,22 @@ async def _score_one_criterion(
     user_msg = "Score this criterion. Output ONLY the JSON object."
     images = [image_b64] if image_b64 else []
 
+    # Per-criterion calls need to land on a parseable JSON object. We pull
+    # the user's saved model + sampling, then cap temperature at 0.2 for
+    # JSON-stability (no matter what the user picked) and clamp num_predict
+    # to a small ceiling — the response is a ~150-token verdict object.
+    base_kwargs = active_llm.to_chat_kwargs()
+    base_kwargs["temperature"] = min(base_kwargs["temperature"], 0.2)
+    base_kwargs["num_predict"] = min(base_kwargs["num_predict"], 1024)
+
     async def _collect(json_mode: bool) -> str:
         pieces: list[str] = []
         async for evt in stream_chat(
             system_prompt=system_prompt,
             user_prompt=user_msg,
             images_b64=images,
-            temperature=0.1,
-            num_ctx=16_384,
-            num_predict=512,  # ~150-token JSON object — plenty
             json_mode=json_mode,
+            **base_kwargs,
         ):
             if evt["type"] == "token":
                 pieces.append(evt["content"])
@@ -1053,6 +1078,10 @@ async def _run_compliance_per_criterion(
     per_criterion_template = await fetch_template(db, "compliance_per_criterion_v1")
     synthesis_template = await fetch_template(db, "compliance_synthesis_v1")
 
+    # Active LLM config (model + sampling). Passed into _score_one_criterion
+    # for every criterion call AND used for the synthesis stream.
+    active_llm = await fetch_active_llm_config(db)
+
     # Truncate the doc text the same way the single-pass mode does.
     doc_for_prompt = ""
     if doc_text:
@@ -1073,6 +1102,7 @@ async def _run_compliance_per_criterion(
             "image_bytes_resized": len(processed.resized_bytes) if processed else 0,
             "doc_text_chars": len(doc_text) if doc_text else 0,
             "doc_truncated": bool(doc_text and len(doc_text) > _DOC_TEXT_CHAR_CAP),
+            "model": active_llm.model,
         },
     )
 
@@ -1145,6 +1175,7 @@ async def _run_compliance_per_criterion(
                         criterion_text=p["criterion_text"] or p["criteria"],
                         document_text=doc_for_prompt,
                         image_b64=processed.b64 if processed else None,
+                        active_llm=active_llm,
                     )
 
                     yield _sse_event(
@@ -1178,9 +1209,7 @@ async def _run_compliance_per_criterion(
                     system_prompt=synth_prompt,
                     user_prompt="Produce the narrative as instructed.",
                     images_b64=[],  # synthesis doesn't need the image
-                    temperature=0.3,
-                    num_ctx=16_384,
-                    num_predict=2_000,
+                    **active_llm.to_chat_kwargs(),
                 ):
                     et = evt["type"]
                     if et == "token":

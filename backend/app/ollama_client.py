@@ -77,6 +77,16 @@ async def stream_chat(
     num_ctx: int = 8192,
     num_predict: int = 4096,
     json_mode: bool = False,
+    # ── User-tunable knobs (Settings → LLM Model) ──
+    # When None, the corresponding option is omitted from the request and
+    # Ollama applies its own default. `model` and `keep_alive` default to
+    # the env-derived settings.* values; pass an explicit string to override.
+    model: str | None = None,
+    keep_alive: str | None = None,
+    top_p: float | None = None,
+    top_k: int | None = None,
+    repeat_penalty: float | None = None,
+    seed: int | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Stream tokens from Ollama. Yields event dicts (see module docstring).
 
@@ -98,6 +108,12 @@ async def stream_chat(
             num_ctx=num_ctx,
             num_predict=num_predict,
             json_mode=json_mode,
+            model=model,
+            keep_alive=keep_alive,
+            top_p=top_p,
+            top_k=top_k,
+            repeat_penalty=repeat_penalty,
+            seed=seed,
         ):
             yield evt
 
@@ -111,11 +127,31 @@ async def _stream_impl(
     num_ctx: int,
     num_predict: int,
     json_mode: bool = False,
+    model: str | None = None,
+    keep_alive: str | None = None,
+    top_p: float | None = None,
+    top_k: int | None = None,
+    repeat_penalty: float | None = None,
+    seed: int | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
+    options: dict[str, Any] = {
+        "temperature": temperature,
+        "num_ctx": num_ctx,
+        "num_predict": num_predict,
+    }
+    if top_p is not None:
+        options["top_p"] = top_p
+    if top_k is not None:
+        options["top_k"] = top_k
+    if repeat_penalty is not None:
+        options["repeat_penalty"] = repeat_penalty
+    if seed is not None:
+        options["seed"] = seed
+
     payload = {
-        "model": settings.ollama_model,
+        "model": model or settings.ollama_model,
         "stream": True,
-        "keep_alive": settings.ollama_keep_alive,
+        "keep_alive": keep_alive if keep_alive is not None else settings.ollama_keep_alive,
         # `think: False` disables Gemma 4's reasoning/thinking mode (which
         # otherwise routes output into `message.thinking` and leaves
         # `message.content` empty). On non-thinking models like qwen2.5vl
@@ -126,11 +162,7 @@ async def _stream_impl(
             user_prompt=user_prompt,
             images_b64=images_b64,
         ),
-        "options": {
-            "temperature": temperature,
-            "num_ctx": num_ctx,
-            "num_predict": num_predict,
-        },
+        "options": options,
     }
     if json_mode:
         # Constrain output to valid JSON. Used by per-criterion scoring
@@ -226,8 +258,13 @@ def _classify_error(status: int, body: str) -> str:
     return "upstream_4xx"
 
 
-async def check_health() -> tuple[bool, bool, str | None]:
-    """Ping Ollama. Returns (reachable, model_present, error_or_none)."""
+async def check_health(model_name: str | None = None) -> tuple[bool, bool, str | None]:
+    """Ping Ollama. Returns (reachable, model_present, error_or_none).
+
+    `model_name`, if given, overrides the env-derived default — useful
+    when the user has chosen a different model via Settings → LLM Model.
+    """
+    target = (model_name or settings.ollama_model).strip()
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(f"{settings.ollama_host.rstrip('/')}/api/tags")
@@ -235,8 +272,8 @@ async def check_health() -> tuple[bool, bool, str | None]:
                 return False, False, f"status {resp.status_code}"
             tags = resp.json().get("models", [])
             available = [m.get("name", "") for m in tags]
-            model_present = settings.ollama_model in available or any(
-                name.startswith(settings.ollama_model.split(":")[0]) for name in available
+            model_present = target in available or any(
+                name.startswith(target.split(":")[0]) for name in available
             )
             return True, model_present, None
     except httpx.HTTPError as exc:
