@@ -148,10 +148,23 @@ async def _stream_impl(
     if seed is not None:
         options["seed"] = seed
 
+    # Ollama's keep_alive accepts an int (seconds; -1 = pin forever, 0 =
+    # unload immediately) OR a duration string with a unit ("30m", "1h").
+    # A bare numeric string like "-1" or "0" without a unit is rejected
+    # with `time: missing unit in duration "-1"`. The Settings UI saves
+    # the value as a string for parity with Ollama's accepted forms, so
+    # coerce numeric-only strings back to int before serialising.
+    ka = keep_alive if keep_alive is not None else settings.ollama_keep_alive
+    if isinstance(ka, str):
+        try:
+            ka = int(ka)
+        except ValueError:
+            pass  # keep as-is — duration string like "30m" passes through
+
     payload = {
         "model": model or settings.ollama_model,
         "stream": True,
-        "keep_alive": keep_alive if keep_alive is not None else settings.ollama_keep_alive,
+        "keep_alive": ka,
         # `think: False` disables Gemma 4's reasoning/thinking mode (which
         # otherwise routes output into `message.thinking` and leaves
         # `message.content` empty). On non-thinking models like qwen2.5vl

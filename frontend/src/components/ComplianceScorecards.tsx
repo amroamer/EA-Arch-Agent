@@ -429,17 +429,19 @@ function FrameworkCard({ fw, rows, score, editable, onUpdateRow }: CardProps) {
           </div>
         ) : null}
 
-        {/* Scorecard table */}
+        {/* Scorecard table — table-fixed enforces the column widths so
+            Remarks doesn't get squeezed by long Criteria text into a
+            sliver too narrow to read multi-sentence verdicts. */}
         <div className="overflow-hidden rounded-lg border border-gray-200">
-          <table className="w-full text-sm">
+          <table className="w-full table-fixed text-sm">
             <thead className="bg-gray-50 text-left text-xs uppercase tracking-wider text-gray-500">
               <tr>
                 <th className="w-10 px-3 py-2 text-center font-medium">#</th>
-                <th className="px-3 py-2 font-medium">Criteria</th>
+                <th className="w-[34%] px-3 py-2 font-medium">Criteria</th>
                 <th className="w-20 px-3 py-2 text-right font-medium">
                   Weight
                 </th>
-                <th className="w-44 px-3 py-2 font-medium">Compliance</th>
+                <th className="w-40 px-3 py-2 font-medium">Compliance</th>
                 <th className="px-3 py-2 font-medium">Remarks</th>
               </tr>
             </thead>
@@ -546,11 +548,14 @@ function FrameworkCard({ fw, rows, score, editable, onUpdateRow }: CardProps) {
                                 remarks: e.target.value || null,
                               })
                             }
-                            className="min-h-[40px] resize-y text-sm"
+                            // Sized for typical 2–4 sentence model verdicts.
+                            // resize-y still lets the consultant grow it.
+                            rows={4}
+                            className="min-h-[96px] w-full resize-y text-sm leading-relaxed"
                             placeholder="Notes…"
                           />
                         ) : r.status === "done" ? (
-                          <span className="text-sm text-gray-700">
+                          <span className="block whitespace-pre-wrap text-sm leading-relaxed text-gray-700">
                             {r.remarks ?? (
                               <span className="text-gray-300">—</span>
                             )}

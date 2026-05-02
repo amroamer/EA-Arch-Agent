@@ -1235,12 +1235,15 @@ async def _run_compliance_per_criterion(
                         )
                     elif et == "error":
                         # Synthesis failed — keep the scorecard, skip the
-                        # narrative for this framework.
+                        # narrative for this framework. NB: avoid the key
+                        # `message` in `extra` — it's a reserved attribute
+                        # on LogRecord and python-json-logger raises
+                        # KeyError("Attempt to overwrite 'message' …").
                         logger.warning(
                             "synthesis_error",
                             extra={
                                 "framework_id": fw.id,
-                                "message": evt.get("message"),
+                                "synthesis_message": evt.get("message"),
                             },
                         )
                         break
