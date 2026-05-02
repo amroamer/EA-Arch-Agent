@@ -1,9 +1,16 @@
 """FastAPI application entrypoint.
 
-The app is mounted under `BASE_PATH` (default `/EAArchAgent`) so that
-nginx can route the entire path prefix to this service in production. In
-development, the Vite dev server proxies the API path to the backend
-directly.
+Routing model:
+    Browser  → https://host/EAArchAgent/api/sessions
+    nginx    → strips /EAArchAgent, forwards /api/sessions to backend
+    Backend  → mounts routes at /api/sessions (no public-prefix awareness
+               in the URL itself)
+
+We tell FastAPI about the public prefix via `root_path=settings.base_path`
+so the OpenAPI spec and Swagger UI emit browser-correct URLs (i.e. they
+include /EAArchAgent in their links) even though every route is mounted
+at /api internally. The Vite dev proxy mirrors the nginx rewrite — see
+frontend/vite.config.ts — so dev and prod behave identically.
 """
 from __future__ import annotations
 
@@ -58,8 +65,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="EA Arch Agent",
     version="1.0.0",
-    docs_url=f"{settings.base_path}/api/docs",
-    openapi_url=f"{settings.base_path}/api/openapi.json",
+    docs_url="/api/docs",
+    openapi_url="/api/openapi.json",
+    # Public URL prefix (nginx + Vite proxy strip this before forwarding).
+    # FastAPI uses root_path to render correct absolute URLs in the
+    # OpenAPI spec, the Swagger UI, and `request.url_for()` calls.
+    root_path=settings.base_path,
     lifespan=lifespan,
 )
 
@@ -76,7 +87,10 @@ app.add_middleware(
 )
 
 # ── Routers ────────────────────────────────────────────────────────────
-api_prefix = f"{settings.base_path}/api"
+# Routes are mounted at /api/*, NOT /EAArchAgent/api/*. The /EAArchAgent
+# prefix is a deployment-layer concern (nginx + the Vite dev proxy strip
+# it before the request reaches the app). See module docstring.
+api_prefix = "/api"
 
 app.include_router(health.router, prefix=api_prefix, tags=["health"])
 app.include_router(analyze.router, prefix=api_prefix, tags=["analyze"])
