@@ -7,8 +7,8 @@ VM can be brought up reproducibly with one command.
 ## Files
 | File | Purpose |
 |---|---|
-| `001_schema.sql` | Idempotent DDL — creates 4 tables (`sessions`, `images`, `frameworks`, `framework_items`) plus their PKs, FKs, indexes. Safe to re-apply. |
-| `002_seed_data.sql` | TRUNCATE + INSERT of the 11 EA-Compliance frameworks (91 criteria total). Wrapped in `BEGIN; … COMMIT;`. |
+| `001_schema.sql` | Idempotent DDL — creates 6 tables (`sessions`, `images`, `frameworks`, `framework_items`, `prompt_overrides`, `llm_config`) plus their PKs, FKs, indexes. Safe to re-apply. |
+| `002_seed_data.sql` | Seeds the 10 EA-Compliance frameworks (93 criteria) **destructively** — TRUNCATE + INSERT, so re-runs match local exactly. The `prompt_overrides` and `llm_config` sections are **non-destructive** — INSERT … ON CONFLICT DO NOTHING — so user customisations on the server are preserved. Wrapped in `BEGIN; … COMMIT;`. |
 | `migrate.sh` | Orchestrates schema → verify → seed → row counts. Runs **inside the db container** (uses `psql`, not Docker). |
 | `verify.sh` | Read-only sanity check: tables present, row counts ≥ baseline, scorecards column present. |
 
@@ -47,12 +47,22 @@ docker exec arch-assistant-db pg_dump --schema-only --no-owner \
 # Then run scripts/fix_schema_idempotent.py (or hand-edit) to wrap CREATEs
 # with IF NOT EXISTS and ADD CONSTRAINTs in DO blocks.
 
-# Seed (frameworks only — sessions/images are runtime data, not seeded)
+# Seed (frameworks + prompts + llm_config — sessions/images are runtime
+# data, not seeded). Includes any prompt overrides and LLM config the
+# local user has saved via the Settings UI; the seed script will then
+# attempt to insert them on the target without overwriting existing
+# server-side values.
 docker exec arch-assistant-db pg_dump --data-only --no-owner \
   --no-privileges --column-inserts -U kpmg \
-  -t public.frameworks -t public.framework_items kpmg_arch \
-  > migrations/raw_seed.sql
-# Then prepend `BEGIN; TRUNCATE … CASCADE;` and append `COMMIT;`.
+  -t public.frameworks -t public.framework_items \
+  -t public.prompt_overrides -t public.llm_config \
+  kpmg_arch > migrations/raw_seed.sql
+# Splice the resulting INSERT blocks into the four sections of
+# 002_seed_data.sql (frameworks, framework_items, prompt_overrides,
+# llm_config). The frameworks/items sections sit between TRUNCATE and
+# COMMIT; the prompt_overrides + llm_config rows need an explicit
+# `ON CONFLICT (key|id) DO NOTHING` clause appended to each INSERT (see
+# the comment-stub examples already in the file).
 ```
 
 ## Why SQL and not just Alembic?

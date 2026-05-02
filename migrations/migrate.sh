@@ -58,14 +58,14 @@ psql "$PSQL_CONN" -c "SELECT 1;" >/dev/null 2>&1 \
 run_sql() { psql "$PSQL_CONN" "$@"; }
 
 # ── Step 1: Schema ──
-log "Step 1/4: Applying schema (5 tables) …"
+log "Step 1/4: Applying schema (6 tables) …"
 run_sql -v ON_ERROR_STOP=1 -f "$SCHEMA_FILE" >/dev/null
 log "Schema applied."
 
 # ── Step 2: Verify tables ──
 log "Step 2/4: Verifying schema …"
 MISSING=0
-for tbl in sessions images frameworks framework_items prompt_overrides; do
+for tbl in sessions images frameworks framework_items prompt_overrides llm_config; do
     n=$(psql -t -A "$PSQL_CONN" -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='$tbl';" 2>/dev/null)
     if [ "$n" != "1" ]; then
         warn "Missing table: $tbl"
@@ -73,10 +73,10 @@ for tbl in sessions images frameworks framework_items prompt_overrides; do
     fi
 done
 [ "$MISSING" -eq 0 ] || err "$MISSING table(s) missing. Check schema migration output."
-log "All 5 tables verified."
+log "All 6 tables verified."
 
 # ── Step 3: Seed ──
-log "Step 3/4: Applying seed data (10+ frameworks, 90+ criteria) …"
+log "Step 3/4: Applying seed data (frameworks + items, plus prompts/llm_config if present) …"
 run_sql -v ON_ERROR_STOP=1 -f "$SEED_FILE" >/dev/null
 log "Seed applied."
 
@@ -85,10 +85,12 @@ log "Step 4/4: Verifying row counts …"
 echo
 echo "=== Row Counts ==="
 run_sql -c "
-    SELECT 'frameworks'      AS table_name, COUNT(*) AS rows FROM frameworks
-    UNION ALL SELECT 'framework_items', COUNT(*) FROM framework_items
-    UNION ALL SELECT 'sessions',        COUNT(*) FROM sessions
-    UNION ALL SELECT 'images',          COUNT(*) FROM images
+    SELECT 'frameworks'        AS table_name, COUNT(*) AS rows FROM frameworks
+    UNION ALL SELECT 'framework_items',  COUNT(*) FROM framework_items
+    UNION ALL SELECT 'prompt_overrides', COUNT(*) FROM prompt_overrides
+    UNION ALL SELECT 'llm_config',       COUNT(*) FROM llm_config
+    UNION ALL SELECT 'sessions',         COUNT(*) FROM sessions
+    UNION ALL SELECT 'images',           COUNT(*) FROM images
     ORDER BY table_name;
 "
 echo

@@ -1,7 +1,26 @@
 -- ─────────────────────────────────────────────────────────────────────
--- EA Arch Agent — seed data (11 EA-Compliance frameworks + criteria).
--- Idempotent: TRUNCATEs target tables before insert.
--- Re-runs are safe and produce the same end state.
+-- EA Arch Agent — seed data
+--
+-- Scope:
+--   1. frameworks + framework_items  → TRUNCATE + INSERT
+--      (canonical seed — local is the source of truth; re-running this
+--      script resets the server to the snapshot below.)
+--   2. prompt_overrides              → INSERT ... ON CONFLICT DO NOTHING
+--      (preserves any prompt customisations a user has saved on the
+--      server via Settings → Prompts; the seed only adds rows that don't
+--      already exist on the target.)
+--   3. llm_config                    → INSERT ... ON CONFLICT DO NOTHING
+--      (preserves the server-side LLM model + sampling config the user
+--      has selected via Settings → LLM Model.)
+--
+-- Idempotent: re-runs produce the same end state. The script is a single
+-- transaction — partial application can't happen.
+--
+-- To regenerate this file from a current local DB:
+--     pg_dump -U kpmg -d kpmg_arch --data-only --inserts --column-inserts \
+--       -t frameworks -t framework_items -t prompt_overrides -t llm_config \
+--       > /tmp/dump.sql
+--   Then splice the INSERT blocks into the four sections below.
 -- ─────────────────────────────────────────────────────────────────────
 
 BEGIN;
@@ -144,8 +163,43 @@ INSERT INTO public.framework_items (id, framework_id, criteria, weight_planned, 
 
 
 --
--- PostgreSQL database dump complete
+-- PostgreSQL database dump complete (frameworks + framework_items)
 --
+
+
+--
+-- Data for Name: prompt_overrides; Type: TABLE DATA; Schema: public; Owner: -
+--
+-- Non-destructive seed: existing server rows are preserved (ON CONFLICT
+-- DO NOTHING). To force-overwrite a saved prompt, delete it first via
+-- the UI (Settings → Prompts → Reset to default) or:
+--     DELETE FROM prompt_overrides WHERE key = 'analyze_compliance';
+-- Then re-run this script.
+
+-- (No prompt overrides in the source dump.)
+-- Example INSERT shape, kept here for the regenerator step (see header):
+--   INSERT INTO public.prompt_overrides (key, template, updated_at)
+--   VALUES ('analyze_compliance', '<full template text>', NOW())
+--   ON CONFLICT (key) DO NOTHING;
+
+
+--
+-- Data for Name: llm_config; Type: TABLE DATA; Schema: public; Owner: -
+--
+-- Singleton row (id='default'). Non-destructive seed for the same reason
+-- as prompt_overrides — preserves whatever the server-side user has
+-- chosen via Settings → LLM Model.
+
+-- (No llm_config row in the source dump.)
+-- Example INSERT shape:
+--   INSERT INTO public.llm_config (
+--       id, model, temperature, num_ctx, num_predict,
+--       top_p, top_k, repeat_penalty, seed, keep_alive, updated_at
+--   ) VALUES (
+--       'default', 'qwen2.5vl:7b', 0.2, 16384, 4096,
+--       NULL, NULL, NULL, NULL, '-1', NOW()
+--   )
+--   ON CONFLICT (id) DO NOTHING;
 
 
 COMMIT;

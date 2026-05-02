@@ -52,7 +52,7 @@ else
 fi
 
 # ── Tables ──
-for tbl in sessions images frameworks framework_items prompt_overrides; do
+for tbl in sessions images frameworks framework_items prompt_overrides llm_config; do
     n=$(run_sql "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='$tbl';")
     if [ "$n" = "1" ]; then
         ok "Table present: $tbl"
@@ -64,12 +64,16 @@ done
 # ── Row counts ──
 fwc=$(run_sql "SELECT COUNT(*) FROM frameworks;")
 fic=$(run_sql "SELECT COUNT(*) FROM framework_items;")
+poc=$(run_sql "SELECT COUNT(*) FROM prompt_overrides;")
+lcc=$(run_sql "SELECT COUNT(*) FROM llm_config;")
 if [ "$fwc" -ge 10 ]; then ok   "frameworks rows: $fwc (expected >= 10)"
 else                            warn "frameworks rows: $fwc (expected >= 10)"
 fi
 if [ "$fic" -ge 90 ]; then ok   "framework_items rows: $fic (expected >= 90)"
 else                            warn "framework_items rows: $fic (expected >= 90)"
 fi
+ok "prompt_overrides rows: $poc (any count is fine — user-managed)"
+ok "llm_config rows: $lcc (0 = using defaults; 1 = user override active)"
 
 # ── Compliance-mode column ──
 sc=$(run_sql "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='sessions' AND column_name='scorecards';")
